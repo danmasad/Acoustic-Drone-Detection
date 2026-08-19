@@ -47,23 +47,27 @@ site, test on another.
 **From sound to images:** Sound from one direction reaches the microphones at slightly
 different times. Delaying each by those offsets and summing
 reinforces a correct guess and partly cancels a wrong one. Sweeping the
-dataset's direction grid turns each 100 ms of audio into a $91\times23$ image of
+dataset's direction grid turns each 100 ms of audio into a $91\times23$ image[^grid] of
 energy per direction; the drone is a bright blob. Fixed signal processing
-turns this into an image problem.
+makes this an image problem.
+
+[^grid]: Azimuth $-180^\circ$ to $180^\circ$ and elevation $0^\circ$ to $88^\circ$, both
+in $4^\circ$ steps, giving $91\times23$ directions. $4^\circ$ is finer than the array's
+$\approx7^\circ$ beamwidth at 2200 Hz, so the main lobe is oversampled rather than
+missed.
 
 **Models:** The baseline picks the brightest pixel, as classical systems do, failing
 on noise and at range. We train, from scratch, an encoder--decoder CNN outputting
 a per-pixel drone probability plus one "drone present" score, with class-weighted cross-entropy and Adam. Consecutive images enter as extra input
-channels. A secondary output regresses speed from
-Doppler shift: an approaching drone's tone rises.
+channels.
 
 ## Evaluation
 
-On the unseen site: precision--recall and false alarms per hour for detection; median
-angular error and hit rates at the 10$^\circ$ the dataset itself calls
-correct; mean absolute error for speed. We repeat everything per subset -- one
-recorder at a time, then six picked for maximum spread -- and sweep frame-stack
-length.
+On the unseen test site: precision--recall and false alarms per hour for detection; median
+angular error and hit rates at the 10$^\circ$ the dataset calls
+correct. Everything is repeated on six-microphone subsets -- a single
+recorder, then six spanning the full 1.3 m -- and for several numbers of stacked
+images.
 
 ## Related Work and Contribution
 
@@ -73,10 +77,12 @@ microphone, without direction. Our question is practical: how little array does 
 task need? Six of the 24 microphones already span the whole 1.3 m, so the other
 18 buy no angular resolution -- only suppression of the false peaks a sparse array
 invents. We hypothesise that temporal context supplies it instead:
-a real drone drifts smoothly while false peaks flicker -- making cheap, widely
-spaced arrays operationally practical. Two side questions follow: whether their reported drop
-in false alarms over classical beamforming survives a proper test (theirs used five
-minutes of drone-free audio) and whether Doppler yields speed.
+a real drone persists while false peaks flicker -- making cheap, widely
+spaced arrays operationally practical. We also re-test their reported drop in false
+alarms over classical beamforming: they scored it by output stability; our
+drone/no-drone score gives a true false-alarm rate. As an extra we try speed from an
+approaching drone's Doppler pitch shift, though throttle moves rotor pitch more than
+motion.
 
 ## References
 
@@ -84,9 +90,12 @@ minutes of drone-free audio) and whether Doppler yields speed.
 
 1. B. J. Rodríguez, S. F. Chevtchenko, M. Herrera Martínez, Y. Bethi, S. Afshar.
    *Acoustic Imaging for UAV Detection: Dense Beamformed Energy Maps and U-Net SELD.*
-   arXiv:2508.00307, Aug 2025 (rev. Jul 2026); IWAENC 2026.
+   [arXiv:2508.00307](https://arxiv.org/abs/2508.00307), Aug 2025 (rev. Jul 2026);
+   IWAENC 2026.
 2. B. J. Rodríguez, S. F. Chevtchenko, S. Afshar. *UAV Acoustic Localization Dataset:
    24-Channel Beamformed Recordings of a DJI Air 3 Drone with Synchronized GPS Flight
-   Logs.* Western Sydney University, published 15 Jul 2026. DOI 10.26183/07nm-4p35.
+   Logs.* Western Sydney University, published 15 Jul 2026.
+   [DOI 10.26183/07nm-4p35](https://doi.org/10.26183/07nm-4p35).
 3. S. Al-Emadi, A. Al-Ali, A. Mohammad, A. Al-Ali. *Audio Based Drone Detection and
    Identification using Deep Learning.* IWCMC, 2019.
+   [DOI 10.1109/IWCMC.2019.8766732](https://doi.org/10.1109/IWCMC.2019.8766732).

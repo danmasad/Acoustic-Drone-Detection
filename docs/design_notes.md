@@ -66,9 +66,36 @@ JSON, never from the script's `DEFAULT_MIC_ARRAY` fallback.
 
 ### Aperture of every subset that costs nothing to try
 
-Computed from the Oct_11_2024 geometry. Channel order in the concatenated array is
-device order, so **each recorder is already a 6-mic subset** — no rewiring, no
-re-derivation, just column selection.
+Channel order in the concatenated array is device order, so **each recorder is already a
+6-mic subset** — no rewiring, no re-derivation, just column selection.
+
+Verified across **all four** session geometries (the array was recalibrated between
+Oct_11_2024 and the others), because the numbers below are load-bearing for the
+proposal:
+
+| Session | Role | Full aperture | Min spacing | Spread-6 aperture | Devices 1/2/3/4 |
+|---|---|---|---|---|---|
+| Nov_25_2024 f11 | train | 1.30 m | 11.7 cm | 1.30 m | 0.28 / 0.50 / 1.09 / 0.45 m |
+| Mar_18_2025 f1 | train | 1.30 m | 11.7 cm | 1.30 m | 0.28 / 0.50 / 1.09 / 0.45 m |
+| Mar_18_2025 f2 | test 2 | 1.30 m | 11.7 cm | 1.30 m | 0.28 / 0.50 / 1.09 / 0.45 m |
+| Oct_11_2024 f5 | **test 1** | 1.30 m | 17.0 cm | 1.30 m | 0.31 / 0.55 / 1.09 / 0.49 m |
+
+The aperture is **1.30 m in every session**, and a 6-mic subset matches it in every
+session, so the proposal's claim holds on both train and unseen-test geometry. Only the
+inner radii were recalibrated (`r_` = 0.10, 0.16, 0.23, 0.29, 0.43, 0.63 for the three
+newer sessions vs 0.10, 0.17, 0.25, 0.32, 0.42, 0.63 for Oct_11), which shifts min
+spacing and the tight-cluster device apertures by 1–4 cm. Nothing structural.
+
+**Discrepancy with the paper, unresolved.** Section 3.2 claims "inter-microphone
+distances ranging from 4 cm to 1.1 m". Neither number matches any published session:
+measured minimum is 11.7 cm (17.0 cm on test 1) and maximum is 1.30 m. Take the paper's
+array spec as approximate and quote our own measurements, which are reproducible from
+the shipped JSON.
+
+The table below uses Oct_11_2024 (test 1) since that is where results are reported.
+
+Caveat: the greedy spread-6 set is **not unique** — arms are symmetric, so channels 1
+and 2 tie. Fix the set explicitly in code and report it.
 
 | Subset | Channels | Aperture | Min spacing | Rows in table above |
 |---|---|---|---|---|
@@ -85,11 +112,19 @@ Three consequences, and they restructured the whole proposal:
    scales as λ/aperture, so the greedy-spread 6 has the *same* angular resolution as all
    24 — 30° at 500 Hz, 15° at 1 kHz, 6.9° at 2.2 kHz. The other 18 microphones buy
    **array gain (≈6 dB) and sidelobe/grating-lobe rejection, not resolution.**
-2. **The array is already spatially aliased.** Alias-free beamforming needs spacing
-   < λ/2 = 7.8 cm at 2.2 kHz; the full array's minimum spacing is 17 cm, and
-   greedy-spread 6 is 55 cm. So sparse subsets produce genuinely ambiguous maps with
-   false peaks, not merely blurrier ones. This is exactly the failure a per-pixel CNN
-   with temporal context might undo, and argmax cannot.
+2. **The array is already spatially aliased inside the model's own band.** Alias-free
+   beamforming needs spacing < λ/2, so 11.7 cm is clean only below **1.47 kHz** while the
+   model input runs to 2.2 kHz; greedy-spread 6 at 50 cm is clean only below **343 Hz**.
+   Sparse subsets therefore produce genuinely *ambiguous* maps with false peaks, not
+   merely blurrier ones. This is exactly the failure a per-pixel CNN with temporal
+   context might undo, and argmax cannot.
+
+   Their own paper states this mechanism explicitly (section 4.3, on the 4-mic DCASE
+   array): "multiple disconnected detections within the same class can arise due to the
+   limited aperture ... and the sidelobe structure of DAS, which can yield competing
+   spatial hypotheses within a single frame. This observation motivates temporal context
+   (multi-frame input)." **They diagnosed our hypothesis and never tested it** — and
+   never on their own 24-channel array, which they only ever ran at full count.
 3. **Device 1 vs Device 3 is a free controlled experiment:** same count (6), same
    hardware, same session, aperture 0.31 m vs 1.09 m — a 3.5× difference. Count fixed,
    spread varied. Device 3 alone reaches 84% of the full aperture with **zero
@@ -430,3 +465,93 @@ Kalman-filter trajectory smoothing.
 Known weakness this leaves: one drone model (DJI Air 3), one array, two sites, and all
 ~10 min of negatives from a single session tail. Detection generalization claims must
 stay modest, and the unseen-site test (Test 1) is the honest headline number.
+
+---
+
+## 13. Temporal architecture: why channel stacking, and the control that proves it
+
+**The objection.** Stacking K frames on the channel axis of a `Conv2d` supposedly gives
+the model no notion of temporal order — "it can permute the input frames and receive
+identical gradients" — so the drift-vs-flicker mechanism would need Conv3D with a causal
+kernel, a ConvLSTM/GRU, or causal temporal attention.
+
+**The premise is false.** A `Conv2d` over stacked frames computes
+
+    y = sum_k  W_k * x_k
+
+with a **separate kernel `W_k` per frame slot**. Permuting the `x_k` while holding `W`
+fixed changes `y`. Order-invariance would require *tied* weights across k — which is
+exactly what Conv3D imposes and channel stacking does not. Channel stacking is the
+*less* constrained option in time, not the more constrained one.
+
+Measured with `utils/temporal_stacking_check.py` (reproducible, ~50 s on CPU):
+
+| Check | Result |
+|---|---|
+| Change in layer output when frames are permuted | **140%** (0% would mean invariant) |
+| Change in gradient w.r.t. the input | **81%** |
+| Fixed `[+1,-1]` temporal difference kernel, scrambled vs smooth | 1.3× response, untrained |
+
+**And it is learnable, not merely expressible.** Two synthetic tasks, both constructed so
+every class has an identical distribution of individual frames — so a single-frame model
+is at chance *by construction*, and in Task A both classes share an identical frame
+*multiset*, so any order-invariant model is also at chance:
+
+| | Task A: drift vs same frames scrambled | Task B: direction of motion |
+|---|---|---|
+| 4 frames stacked as channels | **93.8%** | **99.9%** |
+| Single frame (their model) | 49.7% | 50.4% |
+| Stacked, order shuffled at test | 51.5% | 46.6% |
+| Stacked, order **reversed** at test | 93.8% *(correctly unchanged — a reversed smooth track is still smooth)* | **0.1%** |
+
+The 0.1% is the decisive number: reversing the frames makes the model confidently
+predict the *opposite* direction. A model blind to order would sit at 50%.
+
+**Why the proposed alternatives are not obviously better here.**
+
+1. *Conv3D ties weights across time*, i.e. assumes translation equivariance along t. But
+   our label is the mask for the **current** frame, so "now" and "300 ms ago" play
+   different roles and should get different weights. Weight tying is the wrong prior for
+   a short window with a privileged endpoint; channel stacking gives slot-specific
+   weights for free.
+2. *Causality is already free.* The stack is the current frame plus K−1 past frames, so
+   nothing from the future can enter. Causal kernels solve a problem we do not have.
+3. *Recurrence buys unbounded memory* we do not need over 300–500 ms, at the cost of
+   training time and stability on only ~34k frames.
+
+Precedent: DQN stacked four frames as channels precisely so a feed-forward CNN could
+infer velocity, and early-fusion video CNNs do the same. This is the standard cheap
+approach, not a shortcut invented here.
+
+**A refinement the objection misses, and it matters more.** The dominant cue is probably
+*persistence*, not *drift*. Angular motion of the true peak per 100 ms (4° grid cell):
+
+| Range | 5 m/s | 10 m/s | 15 m/s | over a 4-frame stack @10 m/s |
+|---|---|---|---|---|
+| 20 m | 1.43° | 2.86° | 4.30° | 11.5° = 2.9 cells |
+| 50 m | 0.57° | 1.15° | 1.72° | 4.6° = 1.1 cells |
+| 90 m | 0.32° | 0.64° | 0.95° | 2.6° = **0.6 cells** |
+| 120 m | 0.24° | 0.48° | 0.72° | 1.9° = **0.5 cells** |
+
+Beyond ~70 m the true peak moves **less than one grid cell** over the whole stack, so it
+does not visibly drift — it simply *stays put* while sidelobe artefacts come and go.
+Persistence is an order-*invariant* statistic, so at the ranges where detection is
+hardest the mechanism does not need order at all. Order helps in the near field, where
+the target moves several cells per stack. Either way channel stacking covers both cases,
+which is the point.
+
+Consequence for wording: "a real drone persists while false peaks flicker" is more
+defensible than "drifts smoothly", and true at all ranges.
+
+**The control experiment (run it on day 4, it costs minutes).** Train once with stacked
+frames, then at test time (a) shuffle the frame order and (b) reverse it. If accuracy is
+unchanged, the model is using only per-frame or order-invariant cues and the temporal
+claim is unsupported — report that honestly. If accuracy degrades, quantify by how much;
+that number *is* the evidence that temporal structure is doing work. This turns the
+objection into a measurement instead of an argument.
+
+**Escalation ladder, only if the control shows stacking is not exploiting time:** add
+explicit frame-difference channels (`x_t − x_{t−1}`) as input, which hard-codes the
+motion feature; then Conv3D with a causal temporal kernel; then ConvGRU. Each step is a
+change to the first block only, so the rest of the pipeline and all array-subset results
+stay valid.
