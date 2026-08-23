@@ -1,0 +1,36 @@
+{
+  "run_id": "device3_K1_b16_wce_s0",
+  "git": "ca1aec6",
+  "subset": "device3",
+  "channels": [
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "K": 1,
+  "subbands": 16,
+  "seed": 0,
+  "lr": 0.005,
+  "loss": "wce",
+  "batch": 32,
+  "base": 64,
+  "depth": 3,
+  "device": "mps",
+  "input_mean": 136.55661010742188,
+  "input_std": 6.084064960479736,
+  "mask_positive_rate": 0.013940640900338268,
+  "pos_weight": 71.73271179199219,
+  "train_stacks": 34085,
+  "val_stacks": 14797,
+  "val_positive_rate": 0.8060417652226802,
+  "n_params": 7859010,
+  "early_stopping": {
+    "patience": 1,
+    "min_delta": 0.001,
+    "min_epochs": 15,
+    "max_epochs": 60
+  }
+}

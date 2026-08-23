@@ -1,0 +1,216 @@
+{
+  "config": {
+    "run_id": "device3_K1_b16_wce_s0",
+    "git": "ca1aec6",
+    "subset": "device3",
+    "channels": [
+      12,
+      13,
+      14,
+      15,
+      16,
+      17
+    ],
+    "K": 1,
+    "subbands": 16,
+    "seed": 0,
+    "lr": 0.005,
+    "loss": "wce",
+    "batch": 32,
+    "base": 64,
+    "depth": 3,
+    "device": "mps",
+    "input_mean": 136.55661010742188,
+    "input_std": 6.084064960479736,
+    "mask_positive_rate": 0.013940640900338268,
+    "pos_weight": 71.73271179199219,
+    "train_stacks": 34085,
+    "val_stacks": 14797,
+    "val_positive_rate": 0.8060417652226802,
+    "n_params": 7859010,
+    "early_stopping": {
+      "patience": 1,
+      "min_delta": 0.001,
+      "min_epochs": 15,
+      "max_epochs": 60
+    }
+  },
+  "best_epoch": 1,
+  "epochs_run": 2,
+  "test_2": {
+    "n_frames": 14797,
+    "n_drone": 11927,
+    "auprc": 0.8274854217780294,
+    "f1_f1": 0.8926058973207602,
+    "f1_precision": 0.8060417652226802,
+    "f1_recall": 1.0,
+    "f1_threshold": 0.2593964636325836,
+    "false_alarms_per_hour": 36000.0,
+    "median_angular_deg": 6.8759022279818724,
+    "mean_angular_deg": 23.823127257223096,
+    "median_azimuth_deg": 6.1630096435546875,
+    "median_elevation_deg": 3.3689346313476562,
+    "hit_5deg": 0.3878594784941729,
+    "hit_10deg": 0.6325983063637126,
+    "hit_20deg": 0.7561834493166765,
+    "by_distance": [
+      {
+        "lo": 0.0,
+        "hi": 30.0,
+        "n": 4011,
+        "median_deg": 8.627390404346384
+      },
+      {
+        "lo": 30.0,
+        "hi": 60.0,
+        "n": 3790,
+        "median_deg": 4.576694259210887
+      },
+      {
+        "lo": 60.0,
+        "hi": 90.0,
+        "n": 3268,
+        "median_deg": 5.585851881622089
+      },
+      {
+        "lo": 90.0,
+        "hi": 120.0,
+        "n": 612,
+        "median_deg": 18.284891561914563
+      },
+      {
+        "lo": 120.0,
+        "hi": 180.0,
+        "n": 246,
+        "median_deg": 120.79976798433646
+      },
+      {
+        "lo": 180.0,
+        "hi": Infinity,
+        "n": 0,
+        "median_deg": NaN
+      }
+    ],
+    "val_loss": 2.378050089203592
+  },
+  "history": [
+    {
+      "n_frames": 14797,
+      "n_drone": 11927,
+      "auprc": 0.7279724267795251,
+      "f1_f1": 0.8926727041389118,
+      "f1_precision": 0.8061507265968233,
+      "f1_recall": 1.0,
+      "f1_threshold": 0.8669257164001465,
+      "false_alarms_per_hour": 35974.91289198606,
+      "median_angular_deg": 6.78134762905245,
+      "mean_angular_deg": 23.684353345298273,
+      "median_azimuth_deg": 6.601972579956055,
+      "median_elevation_deg": 3.4576759338378906,
+      "hit_5deg": 0.37394147732036553,
+      "hit_10deg": 0.6269807998658506,
+      "hit_20deg": 0.7502305692965541,
+      "by_distance": [
+        {
+          "lo": 0.0,
+          "hi": 30.0,
+          "n": 4011,
+          "median_deg": 8.011388594121158
+        },
+        {
+          "lo": 30.0,
+          "hi": 60.0,
+          "n": 3790,
+          "median_deg": 5.269932674911978
+        },
+        {
+          "lo": 60.0,
+          "hi": 90.0,
+          "n": 3268,
+          "median_deg": 5.9862284193436475
+        },
+        {
+          "lo": 90.0,
+          "hi": 120.0,
+          "n": 612,
+          "median_deg": 13.403305442774073
+        },
+        {
+          "lo": 120.0,
+          "hi": 180.0,
+          "n": 246,
+          "median_deg": 100.03438515816546
+        },
+        {
+          "lo": 180.0,
+          "hi": Infinity,
+          "n": 0,
+          "median_deg": NaN
+        }
+      ],
+      "val_loss": 1.9942584749118522,
+      "epoch": 0,
+      "train_loss": 0.8524153026585637,
+      "seconds": 187.93461298942566
+    },
+    {
+      "n_frames": 14797,
+      "n_drone": 11927,
+      "auprc": 0.8274854217780294,
+      "f1_f1": 0.8926058973207602,
+      "f1_precision": 0.8060417652226802,
+      "f1_recall": 1.0,
+      "f1_threshold": 0.2593964636325836,
+      "false_alarms_per_hour": 36000.0,
+      "median_angular_deg": 6.8759022279818724,
+      "mean_angular_deg": 23.823127257223096,
+      "median_azimuth_deg": 6.1630096435546875,
+      "median_elevation_deg": 3.3689346313476562,
+      "hit_5deg": 0.3878594784941729,
+      "hit_10deg": 0.6325983063637126,
+      "hit_20deg": 0.7561834493166765,
+      "by_distance": [
+        {
+          "lo": 0.0,
+          "hi": 30.0,
+          "n": 4011,
+          "median_deg": 8.627390404346384
+        },
+        {
+          "lo": 30.0,
+          "hi": 60.0,
+          "n": 3790,
+          "median_deg": 4.576694259210887
+        },
+        {
+          "lo": 60.0,
+          "hi": 90.0,
+          "n": 3268,
+          "median_deg": 5.585851881622089
+        },
+        {
+          "lo": 90.0,
+          "hi": 120.0,
+          "n": 612,
+          "median_deg": 18.284891561914563
+        },
+        {
+          "lo": 120.0,
+          "hi": 180.0,
+          "n": 246,
+          "median_deg": 120.79976798433646
+        },
+        {
+          "lo": 180.0,
+          "hi": Infinity,
+          "n": 0,
+          "median_deg": NaN
+        }
+      ],
+      "val_loss": 2.378050089203592,
+      "epoch": 1,
+      "train_loss": 0.3881512220092615,
+      "seconds": 179.63471007347107
+    }
+  ]
+}

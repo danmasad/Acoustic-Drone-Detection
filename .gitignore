@@ -2,3 +2,15 @@
 .DS_Store
 .venv/
 __pycache__/
+data/
+cache/
+logs/
+
+# 300 MB of checkpoints stays out, but every run's numbers come along: metrics.json holds the
+# final metrics plus the full per-epoch history, so every table in the report can be rebuilt
+# and reviewed without the 24 GB of audio or 13 h of compute behind it.
+runs/*
+!runs/*/
+runs/*/*
+!runs/*/metrics.json
+!runs/*/config.json
