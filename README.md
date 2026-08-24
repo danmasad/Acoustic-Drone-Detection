@@ -57,7 +57,6 @@ synchronization) against all 24**, at 1 frame versus 5 frames of context.
 | [docs/report.md](docs/report.md) | **The final report.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, five tables; the only remaining gap is the division-of-work paragraph |
 | [docs/proposal_uav_acoustic_seld.md](docs/proposal_uav_acoustic_seld.md) | The submitted proposal (PDF built with `utils/build_pdf.sh`) |
 | [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 35 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the three ablations that returned informative nulls, where history saturates, and what the sealed split said |
-| `~/.cursor/plans/acoustic_uav_pipeline_013f8600.plan.md` | The executable build plan with a gate per step |
 
 If you read one thing, read the report. If you read two, add design notes sections 21 and 22:
 what the 18 headline runs say, and why the array our own search called optimal came last.
