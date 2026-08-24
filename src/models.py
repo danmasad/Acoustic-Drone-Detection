@@ -21,9 +21,15 @@ from torch import nn
 from .config import AZ, EL
 
 
-def decode_mask(logits: torch.Tensor, mode: str = "centroid",
-                threshold: float = 0.5) -> tuple[np.ndarray, np.ndarray]:
+def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float = 0.5,
+                dirs: torch.Tensor | None = None,
+                valid: torch.Tensor | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Mask logits -> one direction per frame, in degrees.
+
+    `dirs` supplies one unit vector per map cell and switches the decoder to a layout other
+    than the rectangular elevation-by-azimuth grid — the polar disc of `src.polar`. Without it
+    the rectangular grid is assumed, and the azimuth axis is treated as circular. `valid` marks
+    cells that describe no direction at all, which only the disc has.
 
     Two decoders, and the choice turns out to matter more than most architecture decisions:
 
@@ -39,14 +45,23 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid",
     """
     p = torch.sigmoid(logits)
     B, n_el, n_az = p.shape
+    wrap = dirs is None
     if mode == "argmax":
         k = p.flatten(1).argmax(1)
-        return AZ[(k % n_az).cpu().numpy()], EL[(k // n_az).cpu().numpy()]
+        if wrap:
+            return AZ[(k % n_az).cpu().numpy()], EL[(k // n_az).cpu().numpy()]
+        v = dirs[k].cpu().numpy()
+        return (np.degrees(np.arctan2(v[:, 1], v[:, 0])),
+                np.degrees(np.arcsin(np.clip(v[:, 2], -1.0, 1.0))))
 
     binary = (p > threshold).float()
-    # Erosion = every pixel in the 3x3 neighbourhood is active. Azimuth wraps, elevation does
-    # not, so pad the two axes differently, exactly as the convolutions do.
-    padded = F.pad(binary.unsqueeze(1), (1, 1, 0, 0), mode="circular")
+    if valid is not None:
+        binary = binary * valid.reshape(1, n_el, n_az).float()
+    # Erosion = every pixel in the 3x3 neighbourhood is active. On the rectangular grid azimuth
+    # wraps and elevation does not, so the two axes are padded differently, exactly as the
+    # convolutions do. On the disc there is no seam to preserve and no axis wraps.
+    padded = (F.pad(binary.unsqueeze(1), (1, 1, 0, 0), mode="circular") if wrap
+              else F.pad(binary.unsqueeze(1), (1, 1, 0, 0), mode="constant", value=0.0))
     padded = F.pad(padded, (0, 0, 1, 1), mode="constant", value=0.0)
     eroded = (-F.max_pool2d(-padded, 3, stride=1)).squeeze(1)
     weights = torch.where(eroded.flatten(1).sum(1, keepdim=True) > 0,
@@ -57,12 +72,15 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid",
         weights = weights.clone()
         weights[empty] = F.one_hot(p.flatten(1)[empty].argmax(1), n_el * n_az).float()
 
-    az = torch.from_numpy(np.radians(AZ).astype(np.float32)).to(p.device)
-    el = torch.from_numpy(np.radians(EL).astype(np.float32)).to(p.device)
-    grid_el, grid_az = torch.meshgrid(el, az, indexing="ij")
-    v = torch.stack([torch.cos(grid_el) * torch.cos(grid_az),
-                     torch.cos(grid_el) * torch.sin(grid_az),
-                     torch.sin(grid_el)], -1).reshape(-1, 3)
+    if wrap:
+        az = torch.from_numpy(np.radians(AZ).astype(np.float32)).to(p.device)
+        el = torch.from_numpy(np.radians(EL).astype(np.float32)).to(p.device)
+        grid_el, grid_az = torch.meshgrid(el, az, indexing="ij")
+        v = torch.stack([torch.cos(grid_el) * torch.cos(grid_az),
+                         torch.cos(grid_el) * torch.sin(grid_az),
+                         torch.sin(grid_el)], -1).reshape(-1, 3)
+    else:
+        v = dirs
     mean = (weights @ v) / weights.sum(1, keepdim=True).clamp(min=1e-9)
     mean = mean / mean.norm(dim=1, keepdim=True).clamp(min=1e-9)
     m = mean.cpu().numpy()
@@ -71,23 +89,30 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid",
 
 
 class Conv(nn.Module):
-    """3x3 convolution, batch norm, ReLU, wrapping in azimuth and zero-padding in elevation."""
+    """3x3 convolution, batch norm, ReLU, wrapping in azimuth and zero-padding in elevation.
 
-    def __init__(self, cin: int, cout: int):
+    `wrap=False` zero-pads both axes, which is what the polar disc needs: its horizontal axis
+    is a Cartesian coordinate of the image, not an angle, so wrapping it would join the disc's
+    left rim to its right rim — two directions 180 degrees apart.
+    """
+
+    def __init__(self, cin: int, cout: int, wrap: bool = True):
         super().__init__()
         self.conv = nn.Conv2d(cin, cout, 3, padding=0, bias=False)
         self.norm = nn.BatchNorm2d(cout)
+        self.wrap = wrap
 
     def forward(self, x):
-        x = F.pad(x, (1, 1, 0, 0), mode="circular")
+        x = (F.pad(x, (1, 1, 0, 0), mode="circular") if self.wrap
+             else F.pad(x, (1, 1, 0, 0), mode="constant", value=0.0))
         x = F.pad(x, (0, 0, 1, 1), mode="constant", value=0.0)
         return F.relu(self.norm(self.conv(x)), inplace=True)
 
 
 class Block(nn.Module):
-    def __init__(self, cin: int, cout: int):
+    def __init__(self, cin: int, cout: int, wrap: bool = True):
         super().__init__()
-        self.a, self.b = Conv(cin, cout), Conv(cout, cout)
+        self.a, self.b = Conv(cin, cout, wrap), Conv(cout, cout, wrap)
 
     def forward(self, x):
         return self.b(self.a(x))
@@ -97,19 +122,19 @@ class UNet(nn.Module):
     """(B, C, 23, 91) maps -> per-pixel logits of the same size, plus one presence logit."""
 
     def __init__(self, in_channels: int, base: int = 64, depth: int = 3,
-                 dropout: float = 0.1):
+                 dropout: float = 0.1, wrap: bool = True):
         super().__init__()
         chans = [base * 2 ** i for i in range(depth)]
         self.down = nn.ModuleList()
         c = in_channels
         for ch in chans:
-            self.down.append(Block(c, ch))
+            self.down.append(Block(c, ch, wrap))
             c = ch
-        self.bottleneck = Block(c, c * 2)
+        self.bottleneck = Block(c, c * 2, wrap)
         self.up = nn.ModuleList()
         c = c * 2
         for ch in reversed(chans):
-            self.up.append(Block(c + ch, ch))
+            self.up.append(Block(c + ch, ch, wrap))
             c = ch
         self.drop = nn.Dropout2d(dropout)
         self.mask_head = nn.Conv2d(c, 1, 1)

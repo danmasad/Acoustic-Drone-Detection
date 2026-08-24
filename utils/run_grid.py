@@ -50,6 +50,21 @@ BATTERIES = {
                     + [{"subset": s, "K": 5} for s in ("device1", "device4", "symmetric6")]
                     + [{"subset": s, "K": 5} for s in ("symmetric12", "device1_3")]
                     + [{"subset": "quad4", "K": 5}]),
+
+    # Stage E. The disc projection, on the one cell our paper comparison is made in, so the
+    # comparison that decides it is mean azimuth error in the 100-200 m bin against the
+    # existing rectangular all24 K=1 runs. Three seeds, because a one-seed win here would be
+    # indistinguishable from the +/-1.2 point spread the headline grid already showed.
+    "polar": [{"subset": "all24", "K": 1, "seed": s, "polar": True} for s in (0, 1, 2)],
+
+    # Stage F. Sixteen sub-bands was our reconstruction of an under-specified number in the
+    # paper (notes section 16). Halving and doubling it turns a documented guess into a
+    # documented insensitivity — or, if it moves, into a finding. 16 is already run.
+    "bins": [{"subset": "device3", "K": 1, "subbands": b} for b in (8, 32)],
+
+    # Stage G. Only runs if utils/check_history_depth.py says accuracy was still climbing at
+    # five frames; if it had saturated, this battery is the thing we deliberately do not run.
+    "k9": [{"subset": "device3", "K": 9, "seed": s} for s in (0, 1, 2)],
 }
 
 
@@ -57,7 +72,8 @@ def run_id(cfg: dict) -> str:
     from src.config import N_SUBBANDS
     return (f"{cfg['subset']}_K{cfg['K']}_w{cfg.get('base', WIDTH)}"
             f"_b{cfg.get('subbands', N_SUBBANDS)}_{cfg.get('loss', 'wce')}"
-            f"_s{cfg.get('seed', 0)}")
+            + ("_polar" if cfg.get("polar") else "")
+            + f"_s{cfg.get('seed', 0)}")
 
 
 def main(names: list[str]) -> int:

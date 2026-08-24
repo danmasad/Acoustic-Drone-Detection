@@ -12,9 +12,12 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 RUNS = Path(__file__).resolve().parent.parent / "runs"
 SUBSETS = ("all24", "device3", "best6")
-KS = (1, 5)
+KS = (1, 5, 9)          # K=9 exists on device3 only; empty cells print as a dash
+EXPECTED = (1, 5)       # ...so completeness is only checked over the full grid
 SEEDS = (0, 1, 2)
 METRICS = {"hit_10deg": ("within 10 deg", 100.0, "%", 1),
            "median_angular_deg": ("median error", 1.0, " deg", 1),
@@ -99,19 +102,21 @@ def coherence_table() -> None:
 
 
 def main() -> int:
-    missing = [run_id(s, k, d) for s, k, d in product(SUBSETS, KS, SEEDS)
+    missing = [run_id(s, k, d) for s, k, d in product(SUBSETS, EXPECTED, SEEDS)
                if load(s, k, d) is None]
     if missing:
         print(f"missing {len(missing)} runs: {missing}\n")
 
     for key, (label, scale, unit, dp) in METRICS.items():
         print(f"\n{label} (mean over {len(SEEDS)} seeds, ± sample sd)")
-        print(f"  {'array':<10}{'K=1':>18}{'K=5':>18}{'K=5 - K=1':>14}")
+        print(f"  {'array':<10}" + "".join(f"{f'K={K}':>18}" for K in KS)
+              + f"{'K=5 - K=1':>14}")
         for s in SUBSETS:
-            a, b = cell(s, 1, key), cell(s, 5, key)
+            cells = [cell(s, K, key) for K in KS]
+            a, b = cells[0], cells[1]
             delta = f"{(b.mean() - a.mean()) * scale:+.{dp}f}" if len(a) and len(b) else "—"
-            print(f"  {s:<10}{fmt(a, scale, unit, dp):>18}"
-                  f"{fmt(b, scale, unit, dp):>18}{delta:>14}")
+            print(f"  {s:<10}" + "".join(f"{fmt(c, scale, unit, dp):>18}" for c in cells)
+                  + f"{delta:>14}")
 
     # The headline number: does temporal context close the cheap-vs-full hardware gap?
     print("\n" + "=" * 74)

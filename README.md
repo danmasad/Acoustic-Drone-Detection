@@ -13,14 +13,33 @@ question the reference paper left open:
 
 > **Can temporal context let a cheap 6-microphone array match a 24-microphone one?**
 
-**Measured answer, from 18 runs:** the cheap array matches all 24 already, with no temporal
-context needed — 69.3% ± 0.7 against 70.5% ± 1.5 of frames within 10°, a gap inside the ±1.2 pp
-seed spread. Temporal context adds +1.8 pp on the cheap array and nothing elsewhere. The
-surprise is the third array: the subset our own search called optimal is 18 points *worse* than
+**Measured answer: yes, and it does not even need the context to draw level.** The cheap array
+matches all 24 at one frame each — 69.3% ± 0.7 against 70.5% ± 1.5 of frames within 10°, inside the
+±1.2 pp seed spread — and with nine frames of history it goes past it, to **73.2% ± 1.4**. Since we
+never trained all 24 at K=9 that is not "six microphones beat twenty-four"; it is *0.9 s of latency
+substituting for 18 microphones*, which is the trade a deployment actually faces. History then stops
+paying: re-scoring those weights at 1 to 9 frames gives eight significant increments and a ninth
+inside noise, so the useful window is about 0.8 s, measured rather than assumed (notes 26, 34).
+
+The surprise is the third array: the subset our own search called optimal is 18 points *worse* than
 a single off-the-shelf recorder. Thirteen arrays later, the reason is not the hardware but the
 search — the beampattern criterion predicts accuracy at −0.80 across every array it did not
 choose, and fails only on the winner it selected out of 106,183 candidates. Design notes
 sections 21 and 22.
+
+**Two findings that came out of interrogating our own numbers, not out of new models.** The pooled
+"context does nothing" at K=5 is a *net*: deleting the history of an already-trained model costs
+4.3 pp, and widening the input to five channels costs about what history returns, so the mechanism
+always worked and only stopped hiding at K=9 (notes 26–27, 34). And our detection result did not
+survive its own protocol — the negatives are one recording split in half, so scoring across *scenes*
+instead drops detection to chance, and 90 minutes of real ambient from DEMAND puts the false-alarm
+rate at 24,881 per hour (notes 28–31). Localization is supervised by geometry and we have plenty;
+detection is supervised by scenes and we have three.
+
+**And test 1, the sealed site, is now spent.** Scored once, at the end: the cheap array is again no
+worse than all 24 (54.4% ± 4.6 against 52.2% ± 5.5), everything degrades at the new site, the seed
+spread quadruples to ±5–8 pp, and classical beamforming *wins* the pooled number there while still
+collapsing beyond 90 m where our model holds 5–6°. Report section 7.1 has the range breakdown.
 
 Fewer microphones means a spatially aliased beamformed map — the array invents phantom
 peaks that a single frame cannot distinguish from the real source. Phantoms move between
@@ -35,35 +54,160 @@ synchronization) against all 24**, at 1 frame versus 5 frames of context.
 
 | File | What it is |
 |---|---|
-| [docs/report.md](docs/report.md) | **The final report, first draft.** Every number in it is measured; the gaps are marked `[TO FILL — …]` and listed under "What is left" below. Four pages of the five allowed |
+| [docs/report.md](docs/report.md) | **The final report.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, five tables; the only remaining gap is the division-of-work paragraph |
 | [docs/proposal_uav_acoustic_seld.md](docs/proposal_uav_acoustic_seld.md) | The submitted proposal (PDF built with `utils/build_pdf.sh`) |
-| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 23 sections, including the microphone-subset search, the full experiment grid, and the result-by-result reading of the headline runs |
+| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 35 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the three ablations that returned informative nulls, where history saturates, and what the sealed split said |
 | `~/.cursor/plans/acoustic_uav_pipeline_013f8600.plan.md` | The executable build plan with a gate per step |
 
 If you read one thing, read the report. If you read two, add design notes sections 21 and 22:
 what the 18 headline runs say, and why the array our own search called optimal came last.
 
-## Setup
+## What is in the repository
+
+The trained models are here. A clone is enough to load one and reproduce every number in the
+report; the 24 GB of audio is only needed to train a new run or score a split we never dumped.
+
+| Committed | Size | What it gives you |
+|---|---|---|
+| `runs/*/metrics.json`, `config.json` | 1.3 MB | Final metrics **and** the full per-epoch history for all 40 runs, plus the exact config each was trained under, including the git SHA |
+| `runs/<id>/best.pt` for 25 runs | 165 MB | **Loadable weights.** All 18 headline runs — `all24`, `device3`, `best6` at K=1 and K=5, three seeds each — plus `device3` at K=9, three seeds, and the four full-data detectors |
+| `results/preds/*.npz` | 29 MB | Per-frame output of 111 dumps, 93 on test 2 and 18 on test 1: presence score, both decoders' directions, labels, `seg` and `frame`. Every per-frame analysis reads these, so they run with no dataset and no GPU |
+| `results/*.json`, `figures/` | 1.5 MB | The finished tables, the report's figure, and the per-stage diagnostic plots |
+
+**All three seeds, not one per cell**, because the headline claim is itself a statement about
+seed spread: device3 at 69.3% ± 0.7 against all24 at 70.5% ± 1.5, a gap inside the noise. Seed 0
+happens to be device3's best and all24's worst, so anyone loading a single checkpoint per cell
+would measure device3 *beating* all24 and conclude something stronger than we claim. Quote a
+spread, ship the spread.
+
+Deliberately **not** committed: `data/` (24 GB of audio), `cache/` (the 4 GB STFT cache, which
+`src/stft_cache.py` rebuilds in ~4 min), `logs/`, and 163 MB of other checkpoints — the
+coherence-test arrays, the LOSO folds, the base=64 probes. Those are single runs whose metrics
+are in `metrics.json` and whose per-frame output is in `results/preds/`, so nothing in the report
+depends on having their weights.
+
+## Running the trained models
+
+Both models are committed and neither needs retraining. Every command and snippet below has been
+run and verified against this repository, with its output quoted where it is short enough.
+
+### Step 0 — environment (always)
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-utils/download_dataset.sh          # 24 GiB, ~1 h, resumable, safe to re-run
-.venv/bin/python -m src.stft_cache # ~4 min, writes cache/ (3.4 GiB)
 ```
 
-The dataset is the Western Sydney University UAV Acoustic Localization Dataset (CC BY-SA
-4.0, no registration). `data/`, `cache/`, `logs/` and the 300 MB of checkpoints in `runs/`
-are git-ignored, but **`runs/*/metrics.json` and `config.json` are committed**, so every
-table in the report can be re-derived from a fresh clone with no audio and no compute:
+### Step 1 — the numbers, with no dataset at all
+
+The committed per-frame dumps in `results/preds/` mean every table and figure rebuilds in about a
+minute, no audio and no GPU:
 
 ```bash
-.venv/bin/python utils/summarize_grid.py     # headline grid, order control, array comparison
+.venv/bin/python utils/summarize_grid.py        # headline grid, order control, array comparison
+.venv/bin/python utils/check_history_depth.py            # history depth over the K=5 runs
+.venv/bin/python utils/check_history_depth.py --K 9 --subsets device3   # ...and where it saturates
+.venv/bin/python utils/check_vs_paper.py        # our numbers against the reference paper's
+.venv/bin/python utils/plot_report_figures.py   # the report's figure, from results/*.json
 ```
 
-`figures/` and `results/` are tracked for the same reason.
+### Step 2 — the dataset and the STFT cache (needed to *run* either model)
 
-**Run anything that touches the GPU outside the agent sandbox.** Sandboxed shells report a
-bogus "MPS requires macOS 14.0+" error.
+Nothing runs a model on audio without the STFT cache, and the cache is built from the dataset.
+If you already have the dataset, put it under `data/` in exactly this layout — `src/config.py`
+addresses these four session directories by path, so the names matter:
+
+```
+data/training/Nov_25_2024/flight_11/     20*.wav (4 recorders), *-Airdata.csv, alignment_params.json
+data/training/Mar_18_2025/flight_1/      same
+data/test_2/Mar_18_2025/flight_2/        same
+data/test_1/Oct_11_2024/flight_5/        same
+```
+
+If you do not have it, `utils/download_dataset.sh` fetches it (24 GiB, ~1 h, resumable, safe to
+re-run, skips the 19 GB of 360° video). Then:
+
+```bash
+.venv/bin/python -m src.stft_cache            # ~4 min, writes cache/ (3.4 GiB)
+.venv/bin/python utils/check_stft_cache.py    # prints GATE PASS if the cache is sound
+```
+
+`data/` and `cache/` are git-ignored, so this step is the one thing a clone cannot skip.
+
+### Step 3 — run the localization model (U-Net over beamformed maps)
+
+Pick any of the 18 committed run IDs, `{all24,device3,best6}_K{1,5}_w32_b16_wce_s{0,1,2}`:
+
+```bash
+.venv/bin/python -m src.predict --split test_2 --runs device3_K1_w32_b16_wce_s0
+```
+
+That writes `results/preds/<run>_test_2_causal.npz` and prints `GATE PASS` when the run's own
+`metrics.json` is reproduced to 1e-6. Drop `--runs` to do every run, add `--split test_1` for the
+held-out site, `--overwrite` to recompute a dump that already exists. From Python:
+
+```python
+from src import predict
+run = "device3_K1_w32_b16_wce_s0"                    # the cheap 6-mic array, the headline claim
+pred = predict.cnn_predictions(run, split="test_2")  # per-frame arrays: score, pred_az, pred_el, ...
+assert predict.verify(pred, run) == []               # [] means it matches metrics.json
+```
+
+Note that `cnn_predictions` returns the committed dump when one already exists, so on test 2 this
+works even *without* step 2. Pass `overwrite=True`, or ask for a split or run with no dump, and it
+needs the cache.
+
+### Step 4 — run the detection model (per-channel spectral detector)
+
+This one has no CLI, because it is always scored as a whole split. Four checkpoints are committed:
+`detector_K1_w32_s0_full` and the `_log64`, `_conf`, `_conf_log64` variants.
+
+```python
+from src import detector
+from src.config import CACHE_BAND, MIC_SUBSETS
+from src.data import SplitData
+
+model, saved, stats, bank, dev = detector.load_run("detector_K1_w32_s0_full")
+data = SplitData("test_2", MIC_SUBSETS["all24"], saved["config"]["K"],
+                 band=CACHE_BAND, verbose=False)
+m = detector.evaluate(model, data, stats, dev, bank=bank)
+print(m["auroc"], saved["test_2"]["auroc"])          # 0.6624 0.6624
+print(saved["test_2"]["threshold_at_95_recall"])     # 0.0844, the operating point we quote
+```
+
+Takes ~5 min on CPU and well under a minute on MPS — it is not hung. `bank` is the log-spaced
+filterbank, rebuilt from the config, and it must be passed for the `_log64` checkpoints or the
+input shape will not match. `utils/demand_false_alarms.py` is the worked example of pointing this
+detector at outside audio it never saw.
+
+### Training from scratch, if you want to
+
+```bash
+.venv/bin/python -m src.train --subset device3 --K 5 --seed 0   # one localizer run, ~45 min
+.venv/bin/python -m src.detector --K 1 --width 32               # one detector, minutes
+```
+
+### Two things that will waste your afternoon
+
+- **`best.pt` is a bare `state_dict`.** The architecture and the input normalization constants
+  (`input_mean`, `input_std`) live in the JSON next to it — `config.json` for the localizer,
+  `metrics.json["config"]` for the detector, which never writes a `config.json`. Load through
+  `predict.cnn_predictions` or `detector.load_run` and this is handled for you. Call `torch.load`
+  yourself, skip the normalization, and you get a model that silently scores garbage.
+- **Not on a Mac? Pass `device` explicitly.** Every `config.json` records the device its run was
+  trained on, which here is `mps`, and that recorded value is the default — `pick_device` returns
+  what it is asked for without falling back. So on a Linux or CUDA machine use
+  `cnn_predictions(run, split, device="cpu")`, `detector.load_run(run_id, device="cpu")`, or
+  `--device cpu` on the `src.predict`, `src.train` and `src.detector` CLIs. Otherwise you get an
+  MPS error on a machine that has no MPS.
+  Also run anything touching the GPU outside the agent sandbox: sandboxed shells report a bogus
+  "MPS requires macOS 14.0+" error even on hardware that supports it.
+
+**Test 1 was sealed, and is now spent.** Every choice in this repository was made on test 2.
+`utils/unseal_test1.py` scored the held-out site once, at the end, from checkpoints that already
+existed, and wrote `results/test_1.json`; it refuses to overwrite that file without `--force`, and
+nothing in the repository has been tuned since. If you extend this work, treat those numbers as
+read-only and go back to test 2. The dataset is the Western Sydney University UAV Acoustic
+Localization Dataset (CC BY-SA 4.0, no registration).
 
 ## Progress
 
@@ -82,7 +226,12 @@ bogus "MPS requires macOS 14.0+" error.
 | 5b. Headline grid, 18 runs | **done** | 808 min, no failures. Six microphones on one recorder match all 24 (gap inside seed noise at both K). Temporal context: +1.8 pp on device3 against a ±1.2 pp seed spread, null elsewhere. The searched-optimal `best6` loses by 18 pp. Design notes section 21 |
 | 6a. Coherence test, 5 runs | **done** | 176 min. Killed our own clock-sharing explanation: arrays spanning two recorders do fine, and one of them is the best array we have. The real story is selection on a proxy — the beampattern score predicts accuracy at −0.80 for every array it did not choose, and fails only on its own winner. Design notes section 22 |
 | Paper reproduction check | **done** | Our DAS lands within a few degrees of theirs in every distance bin (40/72/31° against 38/75/33°) and their stability-based false-positive rate reproduces at 68.6% against 67.0%. Our U-Net matches theirs under 100 m once frames are selected by their own rule. Beyond 100 m we do not reproduce them; that bin is 2.5% of frames and the drone sits below the ambient there. Design notes section 23 |
-| 6b. Other ablations | | K sweep, polar grid, bin count, speed head |
+| History-depth curve | **done** | The same nine K=5 checkpoints re-scored at 1 to 5 frames of real history: +4.3 pp, monotone, every increment significant. Reconciles the pooled K=5 null — five channels cost 3.0 pp, history earns back 2.6. Design notes sections 26 and 27 |
+| Detection under leave-one-scene-out | **done**, negative result | Our negatives are one recording split in half; scored across *scenes* instead, detection is 0.488 ± 0.056 AUROC, at chance. DEMAND's 90 minutes of real ambient puts the false-alarm rate at 24,881/h at 95% recall. Design notes sections 28-31 |
+| Polar map, sub-band sweep, log-frequency detector | **done**, three nulls | Each aimed at a diagnosed weakness and each declined to move: disc projection 71.0% ± 1.8 against 70.1% ± 3.6, band count 0.5 pp across 8/16/32, log axis inside the fold spread. Design notes sections 31-33 |
+| K=9, three seeds | **done**, and it wins | 249 min. 73.2% ± 1.4 against 71.1% ± 1.8 at K=5 and 69.3% ± 0.7 at K=1, monotone in K and past the ±1.2 pp yardstick, so temporal context does pay for localization — it just needed nine frames. Re-scoring the same weights at 1 to 9 frames puts saturation at about 0.8 s. Design notes section 34 |
+| Test 1 unsealed | **done**, once | The cheap array holds its parity (54.4% ± 4.6 against 52.2% ± 5.5), everything drops, the seed spread quadruples, and DAS wins the pooled number while still collapsing past 90 m. Report section 7.1 |
+| 6b. Remaining ablations | | Speed head only |
 
 ## What is left
 
@@ -90,11 +239,9 @@ In the order that matters, matching the `[TO FILL — …]` markers in the repor
 
 | # | Task | Cost | Why it matters |
 |---|---|---|---|
-| 1 | **Unseal test 1.** Score the baseline, `device3` and `all24` at K=1 and K=5, and the detector, on the held-out site | ~20 min, no training | The whole report currently reports model-selection numbers. Nothing is quotable as generalization until this runs, and it runs **once** |
-| 2 | **Division of work** paragraph | — | Explicitly required by the course instructions |
-| 3 | **ESC-50 confuser rejection.** `src/esc50.py` is written, the data is downloaded, the spectral cache is not built | ~30 min | Turns "detection is data-limited" from an excuse into a measurement: which sounds actually read as a drone |
-| 4 | Secondary ablations: polar map, bin count, K of 3 and 9, speed head | ~1 h each | Optional depth. Cut from the bottom if time runs out |
-| 5 | Slides, 15 minutes | — | Graded separately |
+| 1 | **Division of work** paragraph in the report | — | The one remaining `[TO FILL]`, and explicitly required by the course instructions |
+| 2 | Slides, 15 minutes | — | Graded separately |
+| 3 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
 
 **Test 1 discipline:** it has been sealed since day one and every choice in this repository was
 made on test 2. Run it last, run it once, and report whatever it says.
@@ -106,13 +253,17 @@ src/config.py      inherited constants, split definitions, pinned microphone sub
 src/geometry.py    microphone positions and steering vectors, per session
 src/labels.py      per-frame azimuth/elevation/range/speed from the GPS logs
 src/stft_cache.py  the only module that opens a WAV; one pass -> cache/
+src/train.py       trains one configuration -> runs/<run_id>/{best.pt, config.json, metrics.json}
+src/predict.py     runs a checkpoint once -> results/preds/, which every analysis reads instead
 src/detector.py    per-channel spectral detector, trained and evaluated on its own
 src/esc50.py       ESC-50 confusers, mixed into our own spectra (detector only, never the map)
 utils/check_*.py   one gate script per build step, each prints GATE PASS or GATE FAIL
                    check_vs_paper.py reproduces the reference paper's own metrics
 utils/summarize_grid.py   the headline tables, seed spreads and array comparison
 utils/search_*.py  the microphone subset searches (already run, results/subset_search.npz)
-utils/plot_*.py    the three report figures in figures/
+utils/plot_report_figures.py  the report's four-panel figure, assembled from results/*.json
+src/polar.py       the zenith-disc projection: input remap, targets, analytic decoding
+src/demand.py      DEMAND ambient, level-matched to ours, for a quotable false-alarm rate
 utils/run_grid.py  batteries of runs, sequential and resumable: step5a, headline, descriptive
 utils/detach.py    launch a battery so it survives the shell that started it
 ```

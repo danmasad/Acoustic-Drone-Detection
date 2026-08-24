@@ -6,11 +6,29 @@ data/
 cache/
 logs/
 
-# 300 MB of checkpoints stays out, but every run's numbers come along: metrics.json holds the
-# final metrics plus the full per-epoch history, so every table in the report can be rebuilt
-# and reviewed without the 24 GB of audio or 13 h of compute behind it.
+# Every run's numbers come along: metrics.json holds the final metrics plus the full per-epoch
+# history, so every table in the report can be rebuilt and reviewed without the 24 GB of audio
+# or 13 h of compute behind it.
 runs/*
 !runs/*/
 runs/*/*
 !runs/*/metrics.json
 !runs/*/config.json
+
+# Weights for the runs the report quotes, so a clone can load a model rather than only read
+# about one: all 18 headline runs (three arrays x K of 1 and 5 x three seeds) plus the four
+# full-data detectors, 141 MB.
+#
+# All three seeds, not one per cell, and the reason is the headline claim itself. It is a
+# statement about seed spread -- device3 at 69.3% +/- 0.7 against all24 at 70.5% +/- 1.5, a gap
+# inside the noise. Seed 0 happens to be device3's best and all24's worst, so a reader who
+# loaded one checkpoint per cell would measure device3 *beating* all24 and conclude something
+# stronger than we are willing to claim. Shipping one seed would hand out the single misreading
+# the report works hardest to prevent.
+#
+# Still out, 163 MB: the coherence-test arrays, the LOSO folds and the base=64 probes. Those are
+# single runs whose numbers are in metrics.json and whose per-frame output is in results/preds/.
+!runs/all24_K?_w32_b16_wce_s?/best.pt
+!runs/device3_K?_w32_b16_wce_s?/best.pt
+!runs/best6_K?_w32_b16_wce_s?/best.pt
+!runs/detector_K1_w32*_s0_full/best.pt

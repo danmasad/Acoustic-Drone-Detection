@@ -25,13 +25,10 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import baseline                                              # noqa: E402
-from src.config import AZ, EL, MIC_SUBSETS, N_SUBBANDS, RUNS          # noqa: E402
-from src.data import SplitData, to_maps                               # noqa: E402
+from src.config import AZ, EL, RUNS                                   # noqa: E402
 from src.geometry import angular_distance                             # noqa: E402
 from src.metrics import angular_errors                                # noqa: E402
-from src.models import UNet, decode_mask                              # noqa: E402
-from src.train import beamformer_factory                              # noqa: E402
+from src.predict import baseline_predictions, cnn_predictions         # noqa: E402
 
 PAPER_BINS = (0.0, 50.0, 100.0, 200.0)
 PAPER = {                       # Fig. 5, mean angular error in degrees
@@ -82,28 +79,15 @@ def stability_flags(az: np.ndarray, el: np.ndarray) -> np.ndarray:
     return stable & valid
 
 
-@torch.no_grad()
-def cnn_predictions(run_id: str, split: str = "test_2", mode: str = "centroid") -> dict:
-    """Per-frame predicted direction from a trained run, decoded their way or ours."""
-    import json
+def with_decoder(pred: dict, mode: str = "centroid") -> dict:
+    """Point `pred_az`/`pred_el` at the chosen decoder's columns.
 
-    cfg = json.loads((RUNS / run_id / "config.json").read_text())
-    model = UNet(cfg["K"] * cfg["subbands"], base=cfg["base"], depth=cfg["depth"])
-    model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location="cpu"))
-    data = SplitData(split, cfg["channels"], cfg["K"], verbose=False)
-    dev = torch.device(cfg["device"])
-    model = model.to(dev).eval()
-    bfs = beamformer_factory(data, cfg["subbands"], dev)
-    cols = {k: [] for k in ("pred_az", "pred_el", "has_drone", "az", "el", "range_m")}
-    for s, X, _, present, frames in data.batches(64, shuffle=False):
-        x = to_maps(bfs(s), X.to(dev), cfg["input_mean"], cfg["input_std"])
-        az, el = decode_mask(model(x)[0], mode=mode)
-        cols["pred_az"].append(az)
-        cols["pred_el"].append(el)
-        cols["has_drone"].append(present.numpy())
-        for key in ("az", "el", "range_m"):
-            cols[key].append(data.meta[s][key][frames])
-    return {k: np.concatenate(v) for k, v in cols.items()}
+    A dump from `src.predict` carries both decoders, so switching between the paper's
+    centroid and our brightest pixel is a column swap rather than another forward pass.
+    """
+    if mode == "argmax":
+        return {**pred, "pred_az": pred["argmax_az"], "pred_el": pred["argmax_el"]}
+    return pred
 
 
 def report(name: str, paper_key: str, split: str, pred: dict) -> None:
@@ -138,9 +122,8 @@ def main(split: str = "test_2") -> int:
     print(f"\nAll numbers are mean angular error in degrees, drone frames only, "
           f"all 24 microphones (their array).")
 
-    r = baseline.run_split(split, "all24", verbose=False)
     report("DAS beamforming, brightest pixel", "beamforming", split,
-           {**r, "has_drone": r["has_drone"]})
+           baseline_predictions(split, "all24", verbose=False))
 
     # Both decoders, because this is where we suspected the reimplementation gap lives: they
     # centroid an eroded mask, we were taking the brightest pixel.
@@ -148,8 +131,9 @@ def main(split: str = "test_2") -> int:
         for seed in (0, 1, 2):
             run_id = f"all24_K1_w32_b16_wce_s{seed}"
             if (RUNS / run_id / "best.pt").exists():
+                pred = cnn_predictions(run_id, split, verbose=False)
                 report(f"our U-Net, {mode} decoding (seed {seed})", "unet", split,
-                       cnn_predictions(run_id, split, mode=mode))
+                       with_decoder(pred, mode))
     return 0
 
 
