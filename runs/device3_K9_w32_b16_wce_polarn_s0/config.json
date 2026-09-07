@@ -1,0 +1,45 @@
+{
+  "run_id": "device3_K9_w32_b16_wce_polarn_s0",
+  "git": "bb0c855",
+  "subset": "device3",
+  "channels": [
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "K": 9,
+  "subbands": 16,
+  "seed": 0,
+  "lr": 0.005,
+  "loss": "wce",
+  "polar": true,
+  "polar_mode": "native",
+  "grid_shape": [
+    46,
+    46
+  ],
+  "batch": 32,
+  "base": 32,
+  "depth": 3,
+  "device": "mps",
+  "input_mean": 137.21983337402344,
+  "input_std": 6.286241054534912,
+  "mask_positive_rate": 0.01160788079207115,
+  "pos_weight": 86.14836883544922,
+  "train_drone_rate": 0.8640628892518061,
+  "presence_pos_weight": 0.15732316672801971,
+  "train_stacks": 36087,
+  "val_stacks": 15267,
+  "val_positive_rate": 0.7800013079589301,
+  "monitor": "hit_10deg",
+  "n_params": 2054690,
+  "early_stopping": {
+    "patience": 10,
+    "min_delta": 0.001,
+    "min_epochs": 15,
+    "max_epochs": 60
+  }
+}

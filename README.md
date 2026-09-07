@@ -67,7 +67,7 @@ synchronization) against all 24**, at 1 frame versus 5 frames of context.
 | [docs/report.md](docs/report.md) | **The final report.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, four tables; the only remaining gap is the division-of-work paragraph |
 | [docs/prereg_test1.md](docs/prereg_test1.md) | Eleven numbered predictions with explicit confidences, written before the last round of runs existed, and scored afterwards. Four came back plainly wrong — including both directions of the polar question and the expectation that all 24 would gain from K=9 — which is the point of writing them down |
 | [docs/proposal_uav_acoustic_seld.md](docs/proposal_uav_acoustic_seld.md) | The submitted proposal (PDF built with `utils/build_pdf.sh`) |
-| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 41 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the ablations that returned informative nulls and the one we later withdrew, where history saturates and where its gain lands, how the significance testing was done, and what the sealed split said |
+| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 42 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the ablations that returned informative nulls and the one we later withdrew, where history saturates and where its gain lands, how the significance testing was done, and what the sealed split said |
 
 If you read one thing, read the report. If you read two, add design notes sections 21 and 22:
 what the 18 headline runs say, and why the array our own search called optimal came last.
@@ -79,9 +79,9 @@ report; the 24 GB of audio is only needed to train a new run or score a split we
 
 | Committed | Size | What it gives you |
 |---|---|---|
-| `runs/*/metrics.json`, `config.json` | 2.3 MB | Final metrics **and** the full per-epoch history for all 78 runs, plus the exact config each was trained under, including the git SHA |
+| `runs/*/metrics.json`, `config.json` | 2.3 MB | Final metrics **and** the full per-epoch history for all 81 runs, plus the exact config each was trained under, including the git SHA |
 | `runs/<id>/best.pt` for 28 runs | 188 MB | **Loadable weights.** All 18 headline runs — `all24`, `device3`, `best6` at K=1 and K=5, three seeds each — plus `device3` and `all24` at K=9, three seeds each, and the four full-data detectors |
-| `results/preds/*.npz` | 32 MB | Per-frame output of 120 dumps, 102 on test 2 and 18 on test 1: presence score, both decoders' directions, labels, `seg` and `frame`. Every per-frame analysis reads these, so they run with no dataset and no GPU |
+| `results/preds/*.npz` | 33 MB | Per-frame output of 123 dumps, 105 on test 2 and 18 on test 1: presence score, both decoders' directions, labels, `seg` and `frame`. Every per-frame analysis reads these, so they run with no dataset and no GPU |
 | `results/*.json`, `figures/` | 1.5 MB | The finished tables, the report's figure, and the per-stage diagnostic plots |
 
 **All three seeds, not one per cell**, because the headline claim is itself a statement about
@@ -275,7 +275,8 @@ Localization Dataset (CC BY-SA 4.0, no registration).
 | Detector with temporal context, K=1/5/9 | **done**, negative result | AUROC on our own site rises 0.691 → 0.752 → 0.785 while false alarms on unseen DEMAND ambient rise 21.6k → 27.1k → 29.0k per hour. Context sharpens the boundary at the site it was trained on and does not transport it. Design notes section 39 |
 | Statistical significance pass | **done** | Cluster-robust block bootstrap for within-weights claims, Welch and exact permutation across seeds, Holm-Bonferroni over all fourteen. Two survive, both the history intervention; a design effect of 3.5 says frame-level intervals were 3.5× too narrow. Design notes section 40 |
 | Where the history gain lands, by range | **done** | +0.5 pp inside 30 m, +8.7 at 60–90 m, +21.8 at 90–120 m, monotone in depth in the far bin. Temporal integration buying signal-to-noise on faint targets, which is what the order-invariance already implied. Design notes section 41 |
-| 6b. Remaining ablations | | Speed head, and the native disc at K=9 |
+| Native disc at K=9, the last untested cell | **done**, negative result | The disc's far-field gain does not transfer to the array and depth where history pays: 62.7° of far-bin azimuth error against the rectangle's 56.5°, pooled accuracy unchanged. The two far-field mechanisms attack one failure, so whichever runs first takes what is available. Design notes section 42 |
+| 6b. Remaining ablations | | Speed head only |
 
 ## What is left
 
@@ -285,8 +286,7 @@ In the order that matters, matching the `[TO FILL — …]` markers in the repor
 |---|---|---|---|
 | 1 | **Division of work** paragraph in the report | — | The one remaining `[TO FILL]`, and explicitly required by the course instructions |
 | 2 | Slides, 15 minutes | — | Graded separately |
-| 3 | Optional: the native disc at K=9 | ~4 h | The one untested cell. The disc helps in the far field and history helps in the far field; whether they compound is unknown |
-| 4 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
+| 3 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
 
 **Test 1 discipline:** it has been sealed since day one and every choice in this repository was
 made on test 2. Run it last, run it once, and report whatever it says.

@@ -135,6 +135,87 @@ def paired_delta(cell: list[dict], base: list[dict], key: str = "azimuth") -> li
     return out
 
 
+K9_CELLS = {"device3 K=9 rect": "device3_K9_w32_b16_wce_s{s}",
+            "device3 K=9 disc": "device3_K9_w32_b16_wce_polarn_s{s}"}
+
+
+def k9(split: str = "test_2") -> dict:
+    """Does the disc's far-field gain survive on the array and depth where history pays?
+
+    The five cells above are all24 K=1, which is where the paper comparison lives but not where
+    this project's one solid positive result lives. The disc sharpens a faint peak (notes 36) and
+    nine frames of history suppress the phantoms competing with it (notes 41), so the open question
+    was whether the two compound. Only `device3` can answer it: all24 gains nothing from depth at
+    all (notes 37), so a disc arm there could not separate the effects.
+
+    Weighted cross-entropy on both sides, not Tversky, so exactly one thing differs.
+    """
+    cells = {n: collect(t, split) for n, t in K9_CELLS.items()}
+    have = {k: v for k, v in cells.items() if v}
+    if len(have) < 2:
+        print(f"\ndevice3 K=9 disc comparison: need both cells, have {list(have)}")
+        return {}
+
+    print(f"\n\ndevice3, K=9, {split}: does the disc still help once history is there?")
+    print(f"  {'':20s}" + "".join(f"{f'{lo}-{hi}m':>10}" for lo, hi in PAPER_BINS) + f"{'<10 deg':>11}")
+    out = {"split": split, "cells": {}}
+    for name, runs in have.items():
+        v = seed_means(runs, PAPER_BINS, "azimuth", np.mean)
+        hit = [float((r["angular"] <= 10).mean()) for r in runs]
+        print(f"  {name:20s}" + "".join(f"{x:>10.1f}" for x in v.mean(0))
+              + f"{100 * np.mean(hit):>10.1f}%"
+              + f"   far seeds " + " ".join(f"{x:.1f}" for x in v[:, FAR])
+              + f"  sd {v[:, FAR].std(ddof=1):.1f}")
+        out["cells"][name] = {"mean_azimuth": v.mean(0).tolist(),
+                              "far_azimuth_per_seed": v[:, FAR].tolist(),
+                              "hit_10deg": hit}
+
+    d = paired_delta(have["device3 K=9 disc"], have["device3 K=9 rect"])
+    out["paired_azimuth"] = d
+    far = d[FAR]
+    print(f"\n  frame-paired far-bin delta, disc minus rect: {far['delta']:+.1f} deg "
+          f"(negative would favour the disc), {100 * far['fraction_improved']:.0f}% of frames improved")
+
+    # The same deltas with the range crossing as the unit of evidence, which is the only version
+    # worth reading. The frame-level standard errors above make the 0-50 m delta look like a
+    # 5-sigma result off 6,398 frames; clustered, only 6 of its 10 crossings even agree on the
+    # sign. This comparison is the clearest illustration in the project of why notes 40 exists.
+    from significance import crossing_test          # noqa: E402  (script-local by design)
+
+    print("\n  the same deltas, clustered by range crossing:")
+    disc_runs, rect_runs = have["device3 K=9 disc"], have["device3 K=9 rect"]
+    n = min(min(len(r["azimuth"]) for r in disc_runs), min(len(r["azimuth"]) for r in rect_runs))
+    delta = (np.mean([r["azimuth"][:n] for r in disc_runs], 0)
+             - np.mean([r["azimuth"][:n] for r in rect_runs], 0))
+    rng = rect_runs[0]["range_m"][:n]
+    seg = rect_runs[0].get("seg")
+    if seg is None:                    # `errors` keeps no segment id, so re-read one dump for it
+        p = predict.cnn_predictions(rect_runs[0]["run_id"], split, verbose=False)
+        seg = p["seg"][p["has_drone"].astype(bool)][:n]
+    out["clustered"] = {}
+    for lo, hi in PAPER_BINS:
+        m = (rng >= lo) & (rng < hi)
+        out["clustered"][f"{lo}-{hi}m"] = crossing_test(delta, m, seg, f"  {lo}-{hi} m")
+    rect_far = np.array(out["cells"]["device3 K=9 rect"]["far_azimuth_per_seed"])
+    disc_far = np.array(out["cells"]["device3 K=9 disc"]["far_azimuth_per_seed"])
+    out["verdict"] = (
+        "The disc's far-field gain does not transfer: it wins this bin by 8.7 deg at all24 K=1 and "
+        f"loses it by {disc_far.mean() - rect_far.mean():.1f} at device3 K=9, with pooled accuracy "
+        "unchanged. Both mechanisms attack one failure, so whichever runs first takes what there is."
+        if disc_far.mean() > rect_far.mean() else
+        "The disc still helps once history is present, so the two are attacking different things.")
+    print(f"  {out['verdict']}")
+    # Worth printing because it is the more interesting number: the rectangle's far bin is wildly
+    # seed-dependent here and the disc's is not, so "the rectangle wins" partly means "it drew a
+    # lucky seed". Neither layout is reliably better in a bin this sparse.
+    print(f"  Far-bin seed spread: rect sd {rect_far.std(ddof=1):.1f} deg against disc "
+          f"sd {disc_far.std(ddof=1):.1f}. The disc is the more reproducible of the two.")
+    RESULTS.mkdir(exist_ok=True)
+    (RESULTS / "polar_k9.json").write_text(json.dumps(out, indent=2))
+    print(f"  wrote {RESULTS / 'polar_k9.json'}")
+    return out
+
+
 def main(split: str = "test_2") -> int:
     print(__doc__.split("\n\n")[0])
     cells = {name: collect(tpl, split) for name, tpl in CELLS.items()}
@@ -239,6 +320,7 @@ def main(split: str = "test_2") -> int:
     (RESULTS / "polar_vs_rect.json").write_text(json.dumps(results, indent=2))
     print(f"\nwrote {RESULTS / 'polar_vs_rect.json'}")
     plot(have, split)
+    k9(split)
     return 0
 
 

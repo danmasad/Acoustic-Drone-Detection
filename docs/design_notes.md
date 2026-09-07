@@ -2091,3 +2091,72 @@ Three readings, in decreasing order of how much we would defend them:
 The practical form of this: history is worth latency precisely when the target is far, which is also
 when a detection system has time to spend. Inside 30 m a drone is loud, one frame is enough, and the
 0.9 s should be skipped.
+
+## 42. The disc at K=9: the two far-field mechanisms do not compound
+
+The last untested combination, and the third time this project bet on a result transferring.
+
+Two things buy far-field accuracy for reasons that sound independent. The natively steered disc
+stops smearing a low-contrast peak across cells (notes 36), worth 8.7° of far-bin azimuth error at
+`all24` K=1. Nine frames of history suppress phantoms by persistence (notes 41), worth +21.8 pp of
+hit rate at 90–120 m. Whether they add was unknown, so: `device3`, K=9, native disc, weighted
+cross-entropy, three seeds, 224 minutes. Predictions registered first, in `docs/prereg_test1.md`.
+
+Mean azimuth error by the paper's bins, three seeds, and the frame-paired delta between the two
+arms with the range crossing as the unit of evidence. `utils/compare_polar.py` prints all of it and
+writes `results/polar_k9.json`.
+
+| `device3` K=9 | 0-50 m | 50-100 m | 100-200 m | Pooled within 10° |
+|---|---|---|---|---|
+| rectangular | 11.4° | 21.9° | 56.5° | 74.0% |
+| native disc | 10.5° | 19.4° | 62.7° | 73.5% |
+| paired delta | −0.94° | −2.58° | **+6.20°** | −0.5 pp |
+| crossings agreeing | 6/10 | 9/11 | 2/2 | — |
+| sign test | p 0.75 | p 0.065 | p 0.50 (floor) | — |
+
+**The far-field hypothesis fails: they do not compound.** The one bin the disc was built to fix
+moves the *wrong* way by 6.2°, where the same layout change bought 8.7° at `all24` K=1. Pooled
+accuracy is unchanged, exactly as predicted, and nothing here clears 0.05, also as predicted — with
+two crossings the far bin's sign test cannot go below 0.50, so +6.2° is a point estimate and no more.
+
+The reading that fits it: **both mechanisms attack the same failure.** A distant drone is a
+low-contrast peak competing with phantoms. History removes phantoms temporally, the disc sharpens
+the peak spatially, and whichever runs first takes what is available. Once nine frames have done it
+the disc contributes mainly its own costs, of which it has two: 21.5% of its cells carry no
+direction at all, and near the centre of the disc — which is high elevation, so the near field — its
+azimuth sampling is coarser than the rectangle's. This is the same shape as notes 37, where 24
+microphones and nine frames also failed to add, and for the same underlying reason.
+
+**Two things here are more interesting than the headline, and neither is a result.** First, the
+disc's advantage appears to *move* rather than vanish: it is better in both bins holding 97% of the
+frames and worse only in the sparse one. The 50-100 m delta of −2.6° with 9 of 11 crossings agreeing
+(p = 0.065) is the most suggestive number the run produced, and it points at the disc's original
+motivation — the rectangle's zenith distortion — paying off at high elevation rather than at long
+range. That deserves one experiment from whoever picks this up; it is not a claim we make.
+
+Second, the rectangular baseline's far-bin seed spread is enormous — 93.2°, 32.8°, 43.5°, a standard
+deviation of 32° — while the disc's three land within 7° of each other. So "the rectangle wins the far
+bin" partly means "the rectangle drew a lucky seed", and the disc is much the more reproducible of
+the two. In a bin this sparse neither layout is reliably better. Nothing in the report rests on
+either observation.
+
+**This comparison is also the clearest illustration in the project of why notes 40 exists.** The
+0-50 m delta is −0.94° with a frame-level standard error of 0.19° off 6,398 frames, which reads like
+a five-sigma result. Clustered by crossing, 6 of its 10 crossings agree on the sign and the sign
+test returns p = 0.75. Same data, same direction, and the honest version is indistinguishable from
+noise. A frame-level interval on this dataset is about 3.5× too narrow in general (notes 40) and, on
+a range-restricted subset like this one, can be far worse than that.
+
+**A provenance note this run forced us to pin down.** Two numbers in the report both called "within
+10°" are computed from different decodes, and the difference is about 0.5 to 0.9 pp:
+
+- `runs/*/metrics.json`, and therefore the headline table, scores the direction **snapped to the
+  grid** — `metrics.summarize` reads `el_idx` and `az_idx`, so the answer is a cell centre, 4° apart
+  in azimuth. `utils/predict.verify` reproduces this to 1e-6, which is why the gate passes.
+- `utils/compare_polar.py`, and therefore every layout comparison, uses the **continuous centroid**
+  in `pred_az` and `pred_el`.
+
+Both are defensible and each table is internally consistent, but the layout comparison *must* use
+the continuous decode: grid-snapping charges the rectangle for its 4° azimuth spacing and credits
+the disc for its 2.5° rim, which is a difference in rasterization rather than in what the model
+learned. Anyone extending this should keep one decode per table and say which.

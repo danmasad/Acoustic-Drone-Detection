@@ -1,0 +1,172 @@
+{
+  "split": "test_2",
+  "cells": {
+    "device3 K=9 rect": {
+      "mean_azimuth": [
+        11.395084381103516,
+        21.949682871500652,
+        56.49334589640299
+      ],
+      "far_azimuth_per_seed": [
+        93.16289520263672,
+        32.76830291748047,
+        43.5488395690918
+      ],
+      "hit_10deg": [
+        0.7290041110831446,
+        0.7477976340297005,
+        0.7419246581089017
+      ]
+    },
+    "device3 K=9 disc": {
+      "mean_azimuth": [
+        10.450204213460287,
+        19.371514638264973,
+        62.6925417582194
+      ],
+      "far_azimuth_per_seed": [
+        67.18340301513672,
+        60.64005661010742,
+        60.25416564941406
+      ],
+      "hit_10deg": [
+        0.7303465055793271,
+        0.7286685124590989,
+        0.7465391391895293
+      ]
+    }
+  },
+  "paired_azimuth": [
+    {
+      "bin": [
+        0,
+        50
+      ],
+      "n_frames": 6398,
+      "delta": -0.9448803663253784,
+      "se_floor": 0.18896814628625663,
+      "fraction_improved": 0.5698655829946858
+    },
+    {
+      "bin": [
+        50,
+        100
+      ],
+      "n_frames": 5147,
+      "delta": -2.5781688690185547,
+      "se_floor": 0.4322679929780771,
+      "fraction_improved": 0.5607149795997669
+    },
+    {
+      "bin": [
+        100,
+        200
+      ],
+      "n_frames": 374,
+      "delta": 6.1992011070251465,
+      "se_floor": 2.064081804067726,
+      "fraction_improved": 0.40106951871657753
+    }
+  ],
+  "clustered": {
+    "0-50m": {
+      "label": "  0-50 m",
+      "n_frames": 6398,
+      "unit": "crossings",
+      "n_units": 10,
+      "mean": -0.9448803663253784,
+      "ci95": [
+        -2.954492819734847,
+        0.9249639428959475
+      ],
+      "p": 0.75390625,
+      "se_resampled": 0.9856897106648039,
+      "se_naive": 0.18896814628625663,
+      "design_effect": 5.216168597916186,
+      "underpowered": true,
+      "n_clusters": 10,
+      "cluster_means": [
+        0.4180305600166321,
+        0.619041919708252,
+        -1.2398462295532227,
+        -0.06022574007511139,
+        5.988819122314453,
+        -3.6299076080322266,
+        -0.05975518748164177,
+        3.2761106491088867,
+        -5.067834377288818,
+        -3.2687911987304688
+      ],
+      "n_positive": 4,
+      "n_agree": 6,
+      "sign_p": 0.75390625,
+      "sign_p_floor": 0.001953125,
+      "bootstrap_p": 0.3245,
+      "p_source": "exact sign test over crossings"
+    },
+    "50-100m": {
+      "label": "  50-100 m",
+      "n_frames": 5147,
+      "unit": "crossings",
+      "n_units": 11,
+      "mean": -2.5781688690185547,
+      "ci95": [
+        -11.325637261037427,
+        1.103229755754671
+      ],
+      "p": 0.0654296875,
+      "se_resampled": 3.23097935473346,
+      "se_naive": 0.4322679929780771,
+      "design_effect": 7.474482050993126,
+      "underpowered": true,
+      "n_clusters": 11,
+      "cluster_means": [
+        -0.20005182921886444,
+        -0.22665545344352722,
+        2.0794196128845215,
+        -0.06763734668493271,
+        -3.230658769607544,
+        26.294382095336914,
+        -22.122203826904297,
+        -2.254081964492798,
+        -21.969482421875,
+        -0.8208836913108826,
+        -6.349141597747803
+      ],
+      "n_positive": 2,
+      "n_agree": 9,
+      "sign_p": 0.0654296875,
+      "sign_p_floor": 0.0009765625,
+      "bootstrap_p": 0.2551,
+      "p_source": "exact sign test over crossings"
+    },
+    "100-200m": {
+      "label": "  100-200 m",
+      "n_frames": 374,
+      "unit": "crossings",
+      "n_units": 2,
+      "mean": 6.1992011070251465,
+      "ci95": [
+        4.120663936084142,
+        16.0802490234375
+      ],
+      "p": 0.5,
+      "se_resampled": 4.631108601757547,
+      "se_naive": 2.064081804067726,
+      "design_effect": 2.243665242642482,
+      "underpowered": true,
+      "n_clusters": 2,
+      "cluster_means": [
+        16.080249786376953,
+        4.120664119720459
+      ],
+      "n_positive": 2,
+      "n_agree": 2,
+      "sign_p": 0.5,
+      "sign_p_floor": 0.5,
+      "bootstrap_p": 5e-05,
+      "p_source": "exact sign test over crossings"
+    }
+  },
+  "verdict": "The disc's far-field gain does not transfer: it wins this bin by 8.7 deg at all24 K=1 and loses it by 6.2 at device3 K=9, with pooled accuracy unchanged. Both mechanisms attack one failure, so whichever runs first takes what there is."
+}

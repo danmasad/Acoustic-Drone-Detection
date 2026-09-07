@@ -153,3 +153,27 @@ pooled, and against the all24 K=1 disc cells for the far bin.
 
 **Test 1 stays sealed regardless.** The conditions in the section above are unchanged and this run
 cannot meet them on its own: prediction 15 says the significance requirement fails by construction.
+
+### Scored, same day
+
+Three right, one wrong, and the wrong one is the reason the run was worth doing. Results in design
+notes section 42.
+
+| # | Prediction | Conf. | Outcome |
+|---|---|---|---|
+| 12 | Pooled `hit_10deg` does not separate | 80% | **Right.** 72.5% ± 1.7 against the rectangle's 73.2% ± 1.4 |
+| 13 | The far bin improves against rectangular K=9 | 60% | **Wrong**, and it moved the other way: 62.7° against 56.5°, so +6.2° worse on a bin with two crossings. The disc is instead better in the two bins holding 97% of frames, strongest at 50–100 m (−2.6°, 9/11 crossings, p = 0.065) |
+| 14 | The two effects do not fully compound | 65% | **Right.** They do not compound at all in the far field, which is where both were supposed to act |
+| 15 | Nothing here passes a significance test | 95% | **Right.** Two crossings, so the sign test's floor is p = 0.50 |
+
+**Test 1 stays sealed**, as prediction 15 guaranteed it would. The three conditions for a second
+look are unmet and no longer look reachable with this dataset: the far-field bin is two crossings
+wide, which caps what any experiment on it can establish.
+
+Across both registrations, **five of fifteen predictions came back wrong** and two more were
+half-right. Three of the five failures were bets that something would *transfer*: that history
+helping on one array meant it would help on another (7), that two arrays fed the same depth would
+land together (6), and that the disc's far-field gain would survive a change of array and depth
+(13). The other two (2, 3) both underestimated how much the representation mattered next to the
+loss. On this dataset, bet against transfer and bet on the representation — which is close to the
+opposite of the intuitions we started with.

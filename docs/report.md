@@ -322,15 +322,19 @@ afternoon in ten places rather than a bigger model.
   nothing, and reverses the sign: mean azimuth beyond 100 m goes from 82.4° resampled and 57.0°
   rectangular to **48.3° native, 45.9° with the paper's Tversky loss** (which separately costs 6.6 pp
   of pooled hit rate, so it is a far-field-only trade). Unconfirmed rather than a win: that bin holds
-  two continuous crossings and a ±15° seed spread, so p = 0.43–0.50. The lesson is procedural — a
-  null is only as good as the implementation under it, and ours was measuring its own interpolation.
+  two crossings and a ±15° seed spread, so p = 0.43–0.50 — a null is only as good as the
+  implementation under it, and ours was measuring its own interpolation. Nor does it transfer: given
+  `device 3`'s nine frames the disc is 6.2° *worse* there, so the two far-field mechanisms do not
+  compound — both attack a faint peak losing to phantoms, and whichever acts first takes what there
+  is, which is also why 24 microphones and nine frames failed to add. What it buys instead is 2.6° at
+  50–100 m (9 of 11 crossings, p = 0.065), a lead left open: that puts the fix at high elevation.
 - **One drone, one dataset, two sites**, so the cross-airframe question is open and settling it needs
   an outdoor, uncompressed recording of a comparable airframe. The available alternative — indoor
   64 kbps recordings of two Parrot toys — stacks airframe, environment, range and codec mismatches at
   once, and its no-drone class is ESC-50 itself, which would leak into section 5.4.
 - **Untested:** the speed head from the unused GPS velocity labels, the reference paper's
-  skip-attention, the native disc at K=9 where the two effects might compound, and leave-one-flight-out
-  for localization, which is the protocol our detection results say we should have used throughout.
+  skip-attention, and leave-one-flight-out for localization, which is the protocol our detection
+  results say we should have used throughout.
 
 ### 7.1 Test 1: the sealed split, scored once
 
