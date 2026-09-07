@@ -1,0 +1,118 @@
+{
+  "depths": {
+    "1": [
+      {
+        "run_id": "detector_K1_w32_s0_full",
+        "seed": 0,
+        "auroc": 0.6623886894382364,
+        "auprc": 0.889014261529586,
+        "reject_at_95": 0.06599286563614744,
+        "demand_per_hour": 24880.666666666668,
+        "demand_median_scene": 24696.0,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K1_w32_s1_full",
+        "seed": 1,
+        "auroc": 0.6880951721067329,
+        "auprc": 0.8940710409186212,
+        "reject_at_95": 0.1631985731272295,
+        "demand_per_hour": 15204.0,
+        "demand_median_scene": 15054.0,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K1_w32_s2_full",
+        "seed": 2,
+        "auroc": 0.7221595736927985,
+        "auprc": 0.9116614871779809,
+        "reject_at_95": 0.09661117717003567,
+        "demand_per_hour": 24688.0,
+        "demand_median_scene": 26772.0,
+        "esc50_fire_rate": null
+      }
+    ],
+    "5": [
+      {
+        "run_id": "detector_K5_w32_s0_full",
+        "seed": 0,
+        "auroc": 0.7568370274617713,
+        "auprc": 0.9239501913311973,
+        "reject_at_95": 0.09624553039332538,
+        "demand_per_hour": 30138.851802403206,
+        "demand_median_scene": 31289.719626168226,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K5_w32_s1_full",
+        "seed": 1,
+        "auroc": 0.7660951324834954,
+        "auprc": 0.9269770138695813,
+        "reject_at_95": 0.12693682955899882,
+        "demand_per_hour": 30987.983978638185,
+        "demand_median_scene": 31277.703604806407,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K5_w32_s2_full",
+        "seed": 2,
+        "auroc": 0.7336333472519385,
+        "auprc": 0.9169893193411834,
+        "reject_at_95": 0.13528009535160906,
+        "demand_per_hour": 20137.516688918557,
+        "demand_median_scene": 18420.56074766355,
+        "esc50_fire_rate": null
+      }
+    ],
+    "9": [
+      {
+        "run_id": "detector_K9_w32_s0_full",
+        "seed": 0,
+        "auroc": 0.7926201105771404,
+        "auprc": 0.9372836726363687,
+        "reject_at_95": 0.16756272401433692,
+        "demand_per_hour": 26752.673796791445,
+        "demand_median_scene": 26927.80748663102,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K9_w32_s1_full",
+        "seed": 1,
+        "auroc": 0.7292377796442193,
+        "auprc": 0.8919169451332172,
+        "reject_at_95": 0.16845878136200718,
+        "demand_per_hour": 33725.93582887701,
+        "demand_median_scene": 35326.20320855615,
+        "esc50_fire_rate": null
+      },
+      {
+        "run_id": "detector_K9_w32_s2_full",
+        "seed": 2,
+        "auroc": 0.833776650795899,
+        "auprc": 0.9497043510727017,
+        "reject_at_95": 0.22371565113500597,
+        "demand_per_hour": 26494.652406417114,
+        "demand_median_scene": 27012.0320855615,
+        "esc50_fire_rate": null
+      }
+    ]
+  },
+  "auroc_k1_vs_k5": {
+    "difference": 0.06130735731981252,
+    "welch_t": -3.0930595577279627,
+    "welch_p": 0.050548054910191695
+  },
+  "demand_k1_vs_k5": {
+    "from": 21590.88888888889,
+    "to": 27088.117489986646
+  },
+  "auroc_k1_vs_k9": {
+    "difference": 0.09433036859316368,
+    "welch_t": -2.6961732623734496,
+    "welch_p": 0.06965830825738853
+  },
+  "demand_k1_vs_k9": {
+    "from": 21590.88888888889,
+    "to": 28991.08734402852
+  }
+}

@@ -109,6 +109,49 @@ class Projection:
         return out * self.keep.to(out.dtype)
 
 
+class NativeDisc:
+    """The disc without the resampling step: steer the beamformer at the disc's own cells.
+
+    `Projection` builds the disc from the finished rectangular map, so its input is a bilinear
+    interpolation of cells 4 degrees apart in azimuth painted onto cells that are 2.5 degrees
+    apart at the rim — the map is smoothed on the way in while the target stays a hard cap
+    rasterized at full disc precision. A far drone is a low-contrast peak, which is exactly what
+    that smoothing costs the most, and the far bin is where the resampled disc lost: 82 degrees
+    of mean azimuth error against the rectangle's 57.
+
+    Steering natively removes the interpolation entirely. `cell_directions` already gives one
+    unit vector per cell and `beamform.Beamformer` already accepts an arbitrary direction set,
+    so the beamformer returns an (n, n) disc directly and this class only has to clear the dead
+    corners. Cost is unchanged: 2116 disc directions against the rectangle's 2093.
+
+    Interchangeable with `Projection` from the caller's side — same `dirs`, `valid`, `keep`, and
+    the same one-argument call — so it drops into the `projection=` slot of `data.to_maps`.
+    """
+
+    def __init__(self, n: int = N, device=None):
+        self.n = n
+        dirs, valid = cell_directions(n)
+        # float32 for the model, float64 for the steering tensor: `Beamformer` computes phase
+        # from these, and rounding a direction before computing a delay is a wavelength-scale
+        # error at 4 kHz.
+        self.steering_dirs = dirs
+        self.dirs = torch.from_numpy(dirs.astype(np.float32)).to(device)
+        self.valid = torch.from_numpy(valid).to(device)
+        self.keep = self.valid.reshape(1, 1, n, n).float()
+
+    @property
+    def grid_shape(self) -> tuple[int, int]:
+        return (self.n, self.n)
+
+    def __call__(self, maps: torch.Tensor) -> torch.Tensor:
+        """(B, C, n, n) -> the same, with the dead corners zeroed.
+
+        The corners carry the zenith placeholder direction, so without this they would repeat
+        one real direction's energy across 21.5% of the image.
+        """
+        return maps * self.keep.to(maps.dtype)
+
+
 def target_mask(az, el, radius_deg: float, n: int = N, chunk: int = 2048) -> np.ndarray:
     """(b, n, n) uint8: the same spherical cap as `labels.target_mask`, on the disc's cells.
 

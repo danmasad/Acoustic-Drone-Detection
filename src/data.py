@@ -116,15 +116,23 @@ def to_maps(bf, X: torch.Tensor, mean: float = 0.0, std: float = 1.0,
 
 
 def input_stats(data: SplitData, beamformers, n_batches: int = 16, batch: int = 32,
-                seed: int = 0) -> tuple[float, float]:
+                seed: int = 0, valid=None) -> tuple[float, float]:
     """Global mean and standard deviation of the decibel maps, from a sample of training
     batches. Global rather than per-frame: per-frame normalization would erase the loudness
-    difference between a drone and silence, which is the detection cue."""
+    difference between a drone and silence, which is the detection cue.
+
+    `valid` is a flat boolean mask over the map's cells, for a layout where some cells describe
+    no direction. It matters for the natively steered polar disc: its dead corners all carry the
+    zenith placeholder direction, so leaving them in would let one real direction's energy
+    contribute 21.5% of the statistics and pull the standardization toward the zenith.
+    """
     rng = np.random.default_rng(seed)
     vals = []
     for i, (s, X, *_ ) in enumerate(data.batches(batch, rng=rng)):
         bf = beamformers(s)
         m = bf.maps(X.reshape(-1, *X.shape[2:]).to(bf.device))
+        if valid is not None:
+            m = m.reshape(*m.shape[:2], -1)[..., valid.to(m.device)]
         vals.append(m.flatten().to("cpu"))
         if i + 1 >= n_batches:
             break

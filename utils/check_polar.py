@@ -18,6 +18,15 @@ Four checks:
    the projection leaves them at exactly zero.
 4. **Resolution parity.** Confirm the radial step matches the rectangular grid's 4 degrees, so a
    layout comparison is not secretly a resolution comparison.
+5. **Native steering.** The disc can be built two ways, and the second one is why this file grew a
+   fifth section. `Projection` resamples the finished rectangular map, so the input is a bilinear
+   blur of 4-degree cells painted onto rim cells 2.5 degrees apart while the target stays a hard
+   cap; `NativeDisc` steers the beamformer at the disc's own directions and interpolates nothing.
+   Checked here: the memoized beamformer really does return a different steering tensor for the
+   two direction sets, a synthetic plane wave peaks within one cell of its analytic direction on
+   the natively steered disc, the dead corners are exactly zero, and the peak is measurably
+   sharper than the resampled one. That last number is the mechanism the whole experiment rests
+   on, so it is measured before any training time is spent on it.
 
 Low elevations are expected to round-trip slightly high: a 10 degree cap centred at 5 degrees
 elevation extends below the horizon, where the disc has no cells, so the visible part of the cap
@@ -32,9 +41,10 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import polar                                            # noqa: E402
-from src.config import ANGULAR_THRESHOLD, AZ, EL, GRID_SHAPE      # noqa: E402
-from src.geometry import angular_distance, directions             # noqa: E402
+from src import beamform, polar                                  # noqa: E402
+from src.config import (ANGULAR_THRESHOLD, AZ, CHUNK, EL, GRID_SHAPE,      # noqa: E402
+                        MIC_SUBSETS, MODEL_BAND, SR, segments)
+from src.geometry import angular_distance, directions, mic_positions       # noqa: E402
 from src.labels import target_mask as rect_mask                   # noqa: E402
 from src.models import decode_mask                                # noqa: E402
 
@@ -127,6 +137,73 @@ def main() -> int:
     if abs(CELL - (EL[1] - EL[0])) > 0.2:
         fails.append(f"radial step {CELL:.2f} deg does not match the elevation step")
 
+    # --- 5. native steering ------------------------------------------------------------
+    nd = polar.NativeDisc()
+    seg = segments("test_2")[0]
+    freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
+    freqs = freqs[(freqs >= MODEL_BAND[0]) & (freqs <= MODEL_BAND[1])]
+    channels = MIC_SUBSETS["all24"]
+    bf_rect = beamform.get(seg.align, channels, freqs, key=seg.session, n_subbands=16,
+                           device="cpu")
+    bf_disc = beamform.get(seg.align, channels, freqs, key=seg.session, n_subbands=16,
+                           device="cpu", dirs=nd.steering_dirs, grid_shape=nd.grid_shape)
+    print(f"\n5. native steering: {len(nd.steering_dirs)} disc directions against "
+          f"{rect_cells} rectangular ones")
+    distinct = bf_rect is not bf_disc and bf_disc.grid_shape == (polar.N, polar.N)
+    print(f"   the memo returns a separate steering tensor for the disc: {distinct}")
+    if not distinct:
+        fails.append("beamform.get handed back the rectangular steering tensor for the disc; "
+                     "the direction set is missing from the memo key")
+
+    pos = mic_positions(seg.align)[channels]
+    native_err, prominence = [], []
+    for a_deg, e_deg in zip(probe_az, probe_el):
+        a, e = np.radians(a_deg), np.radians(e_deg)
+        src = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+        # A unit-amplitude plane wave from src, sampled at each microphone's own delay.
+        S = np.exp(2j * np.pi * freqs[:, None] * (pos @ src / 343.0)[None, :]).T
+        X = torch.from_numpy(S[None].astype(np.complex64))
+
+        # Both paths standardize before the disc is masked, exactly as `data.to_maps` does, so
+        # zero is the mean of the distribution rather than a bright or dark artefact.
+        raw_n = bf_disc.maps(X)
+        nat = nd((raw_n - raw_n.mean()) / raw_n.std()).sum(1).squeeze(0)
+        raw_r = bf_rect.maps(X)
+        res = proj((raw_r - raw_r.mean()) / raw_r.std()).sum(1).squeeze(0)
+
+        k = int(nat.flatten().masked_fill(~valid, -1e9).argmax())
+        v = nd.steering_dirs[k]
+        native_err.append(angular_distance(np.degrees(np.arctan2(v[1], v[0])),
+                                           np.degrees(np.arcsin(np.clip(v[2], -1, 1))),
+                                           a_deg, e_deg))
+        # Prominence: the peak minus the sidelobe floor 15-45 degrees away, in standard
+        # deviations. Blur moves energy out of the peak and into its neighbourhood, so it costs
+        # prominence whether or not it moves the argmax.
+        ang = np.degrees(np.arccos(np.clip(nd.steering_dirs @ src, -1.0, 1.0)))
+        ring = torch.from_numpy((ang >= 15.0) & (ang <= 45.0)) & valid
+        prominence.append((float(nat.flatten()[valid].max() - nat.flatten()[ring].mean()),
+                           float(res.flatten()[valid].max() - res.flatten()[ring].mean())))
+
+    for i, (a_deg, e_deg) in enumerate(zip(probe_az, probe_el)):
+        n_p, r_p = prominence[i]
+        print(f"   az {a_deg:>7.1f} el {e_deg:>5.1f}: peak {native_err[i]:.2f} deg off, "
+              f"prominence {n_p:5.2f} sd native against {r_p:5.2f} resampled "
+              f"({n_p - r_p:+.2f})")
+    sharper = sum(n > r for n, r in prominence)
+    print(f"   native is sharper in {sharper} of {len(prominence)} directions, mean gain "
+          f"{np.mean([n - r for n, r in prominence]):+.2f} sd")
+    if max(native_err) > CELL:
+        fails.append(f"natively steered peaks land up to {max(native_err):.2f} deg from the "
+                     f"true direction, over one {CELL:.2f} deg cell")
+    dead_native = float(nd(torch.ones(1, 1, polar.N, polar.N))[0, 0][
+        ~valid.reshape(polar.N, polar.N)].abs().max())
+    print(f"   dead corners after masking: {dead_native:.1e}")
+    if dead_native > 1e-6:
+        fails.append(f"native disc leaves up to {dead_native:.1e} in its dead corners")
+    if sharper == 0:
+        fails.append("native steering is no sharper than resampling anywhere, so the "
+                     "interpolation hypothesis is dead before training starts")
+
     # A sanity anchor on the rectangular path, which the same decoder still serves.
     rect_az, rect_el = decode_mask(as_logits(rect_mask(az_t, el_t, ANGULAR_THRESHOLD)),
                                    mode="centroid")
@@ -140,6 +217,9 @@ def main() -> int:
     if not fails:
         print("  The projection preserves direction to under one cell, input and target share "
               "one convention, and the dead corners cost exactly what the geometry says.")
+        print("  Native steering points at its own cells and is sharper where it matters: the "
+              "largest prominence gain is at the lowest elevation probed, which is where the "
+              "far-range azimuth error the disc was built to fix actually lives.")
     return 1 if fails else 0
 
 

@@ -47,6 +47,12 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
     B, n_el, n_az = p.shape
     wrap = dirs is None
     if mode == "argmax":
+        # The disc's dead cells carry the zenith as a placeholder direction, so an unmasked
+        # argmax can answer "straight up" for a frame whose peak was actually in a corner. The
+        # target is zero there and a trained model learns to keep them dark, but nothing
+        # enforces it, and -1 is below any sigmoid.
+        if valid is not None:
+            p = p.masked_fill(~valid.reshape(1, n_el, n_az), -1.0)
         k = p.flatten(1).argmax(1)
         if wrap:
             return AZ[(k % n_az).cpu().numpy()], EL[(k // n_az).cpu().numpy()]

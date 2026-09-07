@@ -85,8 +85,14 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location=dev))
 
     data = SplitData(split, cfg["channels"], cfg["K"], verbose=False, polar=is_polar)
-    bfs = beamformer_factory(data, cfg["subbands"], dev)
-    proj = polar.Projection(device=dev) if is_polar else None
+    # Runs trained before the native disc existed have no polar_mode, and they were all
+    # resampled, so that is the right default.
+    native = is_polar and cfg.get("polar_mode", "resample") == "native"
+    proj = None
+    if is_polar:
+        proj = polar.NativeDisc(device=dev) if native else polar.Projection(device=dev)
+    steer = ({"dirs": proj.steering_dirs, "grid_shape": proj.grid_shape} if native else {})
+    bfs = beamformer_factory(data, cfg["subbands"], dev, **steer)
     dirs = proj.dirs if is_polar else None
     valid = proj.valid if is_polar else None
     rng = np.random.default_rng(seed)
@@ -121,7 +127,9 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     cols = {k: np.concatenate(v) for k, v in cols.items()}
     meta = {"kind": "cnn", "run_id": run_id, "split": split, "order": order,
             "K": cfg["K"], "subset": cfg["subset"], "seed": cfg["seed"],
-            "subbands": cfg["subbands"], "polar": is_polar}
+            "subbands": cfg["subbands"], "polar": is_polar,
+            "polar_mode": cfg.get("polar_mode") if is_polar else None,
+            "loss": cfg.get("loss", "wce")}
     if verbose:
         print(f"  {name}: {len(cols['score'])} frames")
     return _save(name, cols, [seg.id for seg in data.segs], meta)

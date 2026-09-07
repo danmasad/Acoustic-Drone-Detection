@@ -1833,3 +1833,261 @@ One protocol note for whoever comes next: the detector's 0.639 AUROC here is *no
 the leave-one-scene-out collapse (notes 28). Test 1's negatives are one minute from one scene, which
 is the same single-soundscape flaw at a smaller sample size. A detector cannot be validated on this
 dataset at all, and that limitation is a property of the data rather than of the model.
+
+## 36. The polar disc, steered natively: withdrawing a null that was our own interpolation
+
+Notes 32 recorded the disc as a well-motivated hypothesis that measured out flat, and closed with
+the reading that the far field has no cue to recover. That conclusion was premature, and the reason
+is worth more than the result.
+
+**What the first implementation actually did.** `polar.Projection` builds the disc *from the
+finished rectangular map*, with `F.grid_sample`. So its input is a bilinear interpolation of cells
+4° apart in azimuth, painted onto cells 2.5° apart at the rim, while the training target is a hard
+10° cap rasterized at full disc precision. The input was smoothed on the way in and the target was
+not. A distant drone is a low-contrast peak, which is exactly what smoothing costs the most, and the
+far bin is where the resampled disc lost worst: 82.4° of mean azimuth error against the rectangle's
+57.0°. We had measured our own interpolation and written it down as a fact about polar geometry.
+
+**The fix is not a better resampler, it is no resampler.** `cell_directions` already returns one
+unit vector per disc cell and `beamform.Beamformer` already accepts an arbitrary direction set, so
+`polar.NativeDisc` hands the beamformer the disc's own cells and gets an (n, n) image back directly.
+Cost is unchanged — 2,116 disc directions against the rectangle's 2,093 — which is the part that
+makes this a fair comparison rather than a bigger model.
+
+Three things had to be fixed alongside it, all of them silent failures:
+
+- **The beamformer memo key ignored the direction set.** `beamform.get` was keyed on session,
+  channels, sub-bands, band and device. A disc run therefore got handed back the *rectangular*
+  steering tensor built earlier for the same session — same shape family, wrong directions, trains
+  happily. The key now includes a hash of the direction array.
+- **Normalization statistics included the dead corners.** The disc inscribes a circle in a square,
+  so 21.5% of cells describe no direction and carry the zenith as a placeholder. Left in, one real
+  direction's energy contributes a fifth of the mean and standard deviation. `data.input_stats` now
+  takes the validity mask.
+- **`argmax` decoding could answer "straight up".** Same placeholder, same cause: an unmasked argmax
+  can pick a dead corner. The target is zero there and a trained model learns to keep them dark, but
+  nothing enforced it. `models.decode_mask` now fills invalid cells with −1 before the argmax.
+
+**Gate first, then compute.** `utils/check_polar.py` steers a synthetic plane wave at known
+directions and checks that the peak lands where the analytic answer says. It also measures the
+mechanism the whole retest rests on: native steering gives a peak prominence **+1.28 sd** higher on
+average and **+2.75 sd** at 8° elevation, the lowest probed and where a distant drone sits. Four
+hours of training should not assume a mechanism that seconds of arithmetic can check.
+
+**Result, all24 K=1, three seeds, mean azimuth error in the 100–200 m bin:**
+
+| Cell | Far-bin azimuth | Pooled within 10° |
+|---|---|---|
+| rectangle + weighted CE (baseline) | 57.0° ± 16.0 | 70.1% |
+| resampled disc + weighted CE | 82.4° ± 12.9 | 71.0% |
+| rectangle + Tversky | 66.4° | 63.5% |
+| native disc + weighted CE | **48.3°** ± 9.3 | 69.5% |
+| native disc + Tversky | **45.9°** ± 15.0 | 67.9% |
+
+So the sign reverses: natively steered, the disc beats the rectangle by 8.7° and beats its own
+resampled version by 34°. Adding the reference paper's Tversky loss takes another 2.4°.
+
+**And we still do not claim it works.** Gate 1 asked for a seed mean at or below 45.0° *and* every
+seed below the baseline's 57.0°. The best cell reaches 45.9° and its worst seed reads 59.5°, so no
+cell passes. More importantly, this bin contains about 2.5% of drone frames arriving as **two
+continuous crossings** of the range band. Frames within a crossing are not independent evidence —
+the drone is at one place, doing one thing — so the honest unit is the crossing, the honest test is
+a sign test over two units, and its smallest possible two-sided p-value is 0.5. Across seeds the
+permutation p is 0.43–0.50. Everything about the point estimate says the disc helps in the far
+field; nothing about the evidence establishes it. Tversky separately costs 6.6 pp of pooled hit
+rate, so it is a far-field-only trade even if it is real.
+
+**The lesson we would actually keep is procedural.** A null result is only as good as the
+implementation underneath it, and ours was measuring a design decision we had not noticed making.
+The tell was available before the retest: the resampled disc was *worse* than the rectangle in the
+far bin, and a projection that only relabels directions should not be able to lose. When an ablation
+that should be neutral comes out negative, suspect the plumbing before writing the conclusion.
+
+## 37. `all24` at K=9: the null that sharpens the claim
+
+Notes 34 had to hedge. `device3` at K=9 reached 73.2% against all24's 70.5% at K=1, and since all24
+had never been trained at K=9 the comparison confounded array size with history depth. The obvious
+objection — "give the full array the same nine frames and it will pull ahead again" — was untested
+and we said so. This is that run: three seeds, four hours, no other change.
+
+| Array | Mics | Recorders | K=1 | K=5 | K=9 | K=9 − K=1 |
+|---|---|---|---|---|---|---|
+| all 24 | 24 | 4 | 70.5% ± 1.5 | 70.1% ± 0.9 | 70.1% ± 2.7 | −0.4 |
+| device 3 | 6 | 1 | 69.3% ± 0.7 | 71.1% ± 1.8 | **73.2% ± 1.4** | **+3.9** |
+
+**Nothing.** Nine frames buy the full array 0.4 pp less than one frame, inside a ±2.7 pp seed
+spread, after buying the cheap array 3.9 pp. The pre-registration (`docs/prereg_test1.md`,
+prediction 7) gave 80% confidence that all24 K=9 would beat all24 K=5, on the grounds that history
+had helped on every array measured. It was wrong, and this is the most useful thing the run produced.
+
+The claim that comes out is narrower than "six microphones beat twenty-four" and stronger than the
+hedge it replaces: **depth substitutes for microphones and adds nothing on top of them.** Nine
+frames of one cheap recorder beat 24 synchronized microphones fed the same nine frames by 3.1 pp.
+With three seeds each that cross-array gap is not separable (Welch p = 0.18), so the defensible
+statement is the within-array one, and it is the trade a deployment faces: 0.9 s of latency or 18
+more microphones, not both.
+
+Why would extra microphones and extra frames not add up? Both are doing the same job. Notes 22 found
+that all 24 is not 24 microphones' worth of information — one recorder is coplanar and its closest
+pair is half a wavelength apart at 1 kHz, so the map is spatially aliased and phantom peaks appear.
+Notes 20 found that history removes phantoms by persistence: the drone stays put while sidelobes
+flicker. Twenty-four microphones suppress phantoms spatially; nine frames suppress them temporally.
+Once either has done it, the other has nothing left to remove. That is also why the gain lands at
+long range in both cases (notes 41), where contrast is lowest and phantoms compete hardest.
+
+## 38. Training the detector on real ambient: it learns soundscapes, not drones
+
+Notes 30 left an obvious objection standing. Our detector fires on 60% of DEMAND frames because it
+had never *heard* real ambient — three scenes from one field, 8.2 minutes. Show it 90 minutes of
+kitchens, cafés, buses and traffic and the false-alarm rate should collapse. That objection deserved
+a measurement rather than a paragraph.
+
+**Protocol.** `utils/demand_trained.py` runs six folds, each holding out one of DEMAND's six scene
+*groups* — domestic, nature, office, public, street, transport. Group-level, not scene-level:
+scenes within a group share an environment, so holding out one scene from a group whose others are
+in training answers a much easier question. Ambient frames are mixed in as negatives at 30% of each
+batch, level-matched to the median in-band energy of our own *training* no-drone frames.
+
+That level-matching reference has to come from the training split, and getting it right took a
+second attempt. `utils/demand_false_alarms.py` takes the same statistic from test 2, which is
+correct for an evaluation that must report in the units its threshold lives in, and is a leak here.
+The first implementation also sampled it from training batches, which are bucketed by segment — the
+first several hundred are all from the first flight and contain no negatives at all — so the
+reference silently depended on the shuffle seed. It now reads the labelled frames directly.
+
+**Result:**
+
+| | False alarms/h at 95% recall | Cut against the 24,881/h baseline |
+|---|---|---|
+| groups it trained on (median) | 5,530 | 4.5× |
+| the held-out group (median) | 10,384 | 2.4× |
+
+Real ambient helps, and it helps roughly twice as much where it has already been. The gate asked for
+a held-out median below 5,000/h with no more than 0.02 AUROC lost; it fails on both counts, the
+worst fold dropping 0.030. Even the groups it trained on stay above the bar, which says the
+per-channel spectrum does not have the capacity to fit 75 minutes of ambient *and* keep the drone
+separable — the ceiling is partly the representation, not only the negative class.
+
+The shape of the failure is the finding, and it is the third independent measurement of the same
+thing: **it learns specific soundscapes rather than what a drone is not.** Leave-one-scene-out found
+it across our own flights (notes 28), DEMAND found it across environments here, and notes 39 finds
+it again along a completely different axis. More ambient of the same kind narrows the gap without
+closing it. What would close it is ambient from many *places*, which is a microphone and an
+afternoon in ten fields, not a bigger model.
+
+## 39. The detector with temporal context: two columns moving in opposite directions
+
+The one intervention that produced a solid positive result in this project is temporal context for
+localization (notes 26, 34, 41). The detector had never been given it — every detector run in the
+report reads a single frame — so this is the same idea applied to the problem that is failing, with
+K frames of one microphone's spectrum stacked on the channel axis and everything else fixed. Three
+depths, three seeds each.
+
+| Detector | AUROC, our site | Rejects at 95% recall | DEMAND alarms/h |
+|---|---|---|---|
+| K=1 | 0.691 ± 0.030 | 11 ± 5% | 21,591 ± 5,532 |
+| K=5 | 0.752 ± 0.017 | 12 ± 2% | 27,088 ± 6,034 |
+| K=9 | **0.785 ± 0.053** | **19 ± 3%** | 28,991 ± 4,103 |
+
+AUROC on our own site rises monotonically and by a lot — +0.094 from K=1 to K=9, where the whole
+detector only clears chance by 0.19 — and the rejection rate at the operating point nearly doubles.
+On ambient it has never heard, false alarms get **worse**, monotonically, by 34%. Neither column's
+difference clears Holm correction (raw Welch p = 0.05 and 0.07 for AUROC, 0.31 and 0.14 for the
+false-alarm rate), so the honest reading is not "context hurts". It is that context buys real
+sharpness *at the site it trained on* and none of it transports.
+
+Two consequences worth recording. First, the K=1 false-alarm baseline in the report changed because
+of this experiment: it is now the three-seed mean of 21,591 ± 5,532 rather than seed 0's 24,881,
+since a claim about a rate should carry a rate's spread. Second, this closes the last plausible
+"we just did not try hard enough" objection to the detection result. Capacity was not the limit
+(86k parameters tie a 7.9 M map head, notes 19), negatives were not the limit (notes 38), and time
+is not the limit either. Three scenes cannot teach what "not a drone" sounds like anywhere else, and
+every direction we push from inside that constraint reports the same thing.
+
+## 40. Significance, done properly: clusters, not frames
+
+The report quotes intervals and p-values, and until this pass they were computed as if frames were
+independent observations. They are not, in two different ways, and both inflate confidence.
+
+`utils/significance.py` handles them separately:
+
+- **Within one set of weights**, comparing an intervention against its own baseline on the same
+  frames, the unit of evidence is a stretch of flight rather than a frame. Frames are 100 ms apart
+  and a drone crosses a range bin in one continuous pass, so we resample contiguous **blocks**.
+  On the pooled history intervention the measured **design effect is 3.48** — the naive standard
+  error of 0.237 pp against a block-resampled 0.827 — meaning every frame-level interval we had
+  written was about 3.5× too narrow. The estimate itself does not move, only its honesty.
+- **Across separately trained runs**, the unit is the seed, and there are three. Welch's t-test and
+  an exact permutation test are both reported. The permutation test is the more honest of the two
+  and it has a floor: with three against three there are only 20 distinct arrangements, so **no
+  three-seed comparison can produce a p below 0.10** regardless of effect size. Where the report
+  compares arms, it says this rather than quoting a t-test as though it were stronger.
+
+**A bootstrap cannot rescue a small number of clusters.** Our first version block-resampled the
+far-bin claims and returned p = 0.0001 from five crossings, which is nonsense: with *n* clusters a
+resampling p-value cannot honestly go below 1/*n*, and the interval is being driven by which of five
+things got picked. Below `MIN_UNITS = 12` the script now reports an **exact sign test over
+clusters** and marks the bootstrap p as unreliable. The far-bin history gain, five crossings all
+agreeing in sign, therefore reads p = 0.0625 — the smallest a five-unit sign test can give — instead
+of 0.0001.
+
+**All fourteen claims, corrected together with Holm-Bonferroni:**
+
+| Claim | raw p | Holm |
+|---|---|---|
+| `device3` K=9 history, pooled | 0.00005 | **0.0007** |
+| `all24` K=5 history, pooled | 0.00005 | **0.0007** |
+| history's far gain exceeds its near gain | 0.018 | 0.21 |
+| `device3` K=9 against K=1 across seeds | 0.026 | 0.28 |
+| detector K=5 AUROC against K=1 | 0.051 | 0.51 |
+| `device3` K=9 history beyond 90 m | 0.063 | 0.56 |
+| detector K=9 AUROC against K=1 | 0.070 | 0.56 |
+| the four polar far-bin comparisons | 0.43–0.50 | 1.0 |
+| the two detector false-alarm comparisons | 0.14, 0.31 | 1.0 |
+| `all24` K=9 against K=1 across seeds | 0.84 | 1.0 |
+
+**Two survive, and both are the same intervention**: deleting history from trained weights, measured
+on those weights. Everything else in the report is a point estimate, and the report now says so in
+the words "point estimate" rather than by omission. This did cost us claims — the far-versus-near
+contrast at Holm 0.21 is the most interesting casualty, and the trained K=9-against-K=1 comparison
+at 0.28 is the one a reader would most expect to be significant — but the alternative is fourteen
+uncorrected tests and a 51% chance that at least one of them reads significant by luck alone.
+
+## 41. Where the temporal-context gain lands, by range
+
+Notes 27 established *that* history pays where evidence is weakest, using frame-paired deltas
+between separately trained K=5 and K=1 models. That comparison carries the channel-cost confound
+(notes 26). Repeating it as a within-weights intervention removes the confound entirely:
+`utils/history_by_range.py` re-scores existing dumps at each history depth and splits the gain by
+distance bin. No training, no GPU, no dataset.
+
+**Gain in points of hit rate from shallowest to deepest history, by range:**
+
+| Cell | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m | pooled |
+|---|---|---|---|---|---|---|
+| `device3` K=9 (1→9 frames) | +0.5 | +4.4 | +8.7 | **+21.8** | +3.0 | +5.1 |
+| `device3` K=5 (1→5) | −0.2 | +2.3 | +6.2 | +8.3 | +4.5 | +2.9 |
+| `all24` K=5 (1→5) | −1.1 | +3.5 | +5.7 | +3.9 | +1.5 | +2.6 |
+| `best6` K=5 (1→5) | +2.2 | +6.8 | +11.0 | +11.4 | +8.4 | +6.7 |
+| frames in bin | 4,003 | 3,790 | 3,268 | 612 | 246 | 11,919 |
+
+Three readings, in decreasing order of how much we would defend them:
+
+1. **The gain grows with range out to 120 m, in every cell.** Monotone across four bins and four
+   independent cells, and at 90–120 m the deepest cell climbs monotonically in depth as well:
+   50.8% at one frame, then 54.8, 58.4, 63.1, 65.4, 68.7, 70.7, 72.3 and 72.5% at nine. That is
+   temporal integration buying signal-to-noise on faint targets, which is the mechanism notes 20
+   predicted from the order-invariance — persistence averages, phantoms do not.
+2. **Near-field history is worthless or negative**, and it gets more negative the more microphones
+   there are: −1.1 pp for all 24, −0.2 for `device3`, +2.2 for `best6`. Where one frame already
+   resolves the direction, the extra channels are cost without return. This is the same trade as
+   notes 37 seen from the other side.
+3. **The 120–180 m bin falls back**, to +3.0 pp. With 246 frames it is the noisiest column here, but
+   the direction agrees with notes 25: past about 90 m two thirds of labelled positives are quieter
+   than a typical ambient frame, so there is nothing for integration to integrate. Interestingly the
+   *azimuth* error still improves there (by 15.4°, the largest of any bin), which is consistent with
+   history pulling estimates toward the right general bearing without getting them inside 10°.
+
+The practical form of this: history is worth latency precisely when the target is far, which is also
+when a detection system has time to spend. Inside 30 m a drone is loud, one frame is enough, and the
+0.9 s should be skipped.

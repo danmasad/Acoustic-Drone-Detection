@@ -37,12 +37,18 @@ def git_sha() -> str:
         return "unknown"
 
 
-def beamformer_factory(data: SplitData, subbands: int, device):
-    """One steering tensor per session calibration, memoized."""
+def beamformer_factory(data: SplitData, subbands: int, device, dirs=None, grid_shape=None):
+    """One steering tensor per session calibration, memoized.
+
+    `dirs` and `grid_shape` steer at a direction set other than the rectangular grid, which is
+    what the natively steered polar disc uses instead of resampling a rectangular map.
+    """
+    extra = {} if dirs is None else {"dirs": dirs, "grid_shape": grid_shape}
+
     def get(s: int):
         seg = data.segs[s]
         return beamform.get(seg.align, data.channels, data.freqs, key=seg.session,
-                            n_subbands=subbands, band=MODEL_BAND, device=device)
+                            n_subbands=subbands, band=MODEL_BAND, device=device, **extra)
     return get
 
 
@@ -110,7 +116,8 @@ def evaluate(model, data: SplitData, bfs, stats, loss_fn, batch: int = 64,
             # The disc's cells are not an elevation-by-azimuth rectangle, so the direction has
             # to come from the cell's own unit vector. Argmax, not centroid, to keep every
             # number in this table comparable with the rectangular runs.
-            az_deg, el_deg = decode_mask(mask_logits, mode="argmax", dirs=proj.dirs)
+            az_deg, el_deg = decode_mask(mask_logits, mode="argmax", dirs=proj.dirs,
+                                         valid=proj.valid)
             cols["pred_az"].append(az_deg)
             cols["pred_el"].append(el_deg)
         for key in ("az", "el", "range_m"):
@@ -132,11 +139,16 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
           base: int = 32, depth: int = 3, max_epochs: int = EARLY["max_epochs"],
           patience: int = EARLY["patience"], min_epochs: int = EARLY["min_epochs"],
           device: str = "auto", tag: str = "", polar: bool = False,
-          verbose: bool = True) -> dict:
+          disc: str = "resample", verbose: bool = True) -> dict:
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
-    run_id = (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + ("_polar" if polar else "")
+    if disc not in ("resample", "native"):
+        raise ValueError(f"disc must be 'resample' or 'native', not {disc!r}")
+    # `_polarn` rather than `_polar_native`, and only when it differs: the resampled runs are
+    # already on disk under `_polar` and must keep their ids so nothing re-trains.
+    suffix = "" if not polar else ("_polarn" if disc == "native" else "_polar")
+    run_id = (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + suffix
               + f"_s{seed}" + (f"_{tag}" if tag else ""))
     out = RUNS / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -145,11 +157,19 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     train_data = SplitData("train", channels, K, verbose=verbose, polar=polar)
     val_data = SplitData("test_2", channels, K, verbose=verbose, polar=polar)
     dev = beamform.pick_device(device)
-    bfs_train = beamformer_factory(train_data, subbands, dev)
-    bfs_val = beamformer_factory(val_data, subbands, dev)
-    proj = polar_grid.Projection(device=dev) if polar else None
+    native = polar and disc == "native"
+    proj = None
+    if polar:
+        proj = (polar_grid.NativeDisc(device=dev) if native
+                else polar_grid.Projection(device=dev))
+    # Native steering changes where the beamformer points; resampling does not, so only the
+    # native path hands a direction set to the factory.
+    steer = ({"dirs": proj.steering_dirs, "grid_shape": proj.grid_shape} if native else {})
+    bfs_train = beamformer_factory(train_data, subbands, dev, **steer)
+    bfs_val = beamformer_factory(val_data, subbands, dev, **steer)
 
-    stats = input_stats(train_data, bfs_train, seed=seed)
+    stats = input_stats(train_data, bfs_train, seed=seed,
+                        valid=proj.valid if native else None)
     pos_rate = train_data.mask_positive_rate()
     drone_rate = train_data.positive_rate
     # No circular padding on the disc: its horizontal axis is an image coordinate, not an angle.
@@ -160,7 +180,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
 
     cfg = {"run_id": run_id, "git": git_sha(), "subset": subset, "channels": channels,
            "K": K, "subbands": subbands, "seed": seed, "lr": lr, "loss": loss,
-           "polar": polar, "grid_shape": list(train_data.masks[0].shape[1:]),
+           "polar": polar, "polar_mode": (disc if polar else None),
+           "grid_shape": list(train_data.masks[0].shape[1:]),
            "batch": batch, "base": base, "depth": depth, "device": str(dev),
            "input_mean": stats[0], "input_std": stats[1],
            "mask_positive_rate": pos_rate, "pos_weight": float(loss_fn.pw),
@@ -245,8 +266,11 @@ if __name__ == "__main__":
     p.add_argument("--tag", default="")
     p.add_argument("--polar", action="store_true",
                    help="project the map onto the zenith disc; see src/polar.py")
+    p.add_argument("--disc", default="resample", choices=["resample", "native"],
+                   help="with --polar: resample the rectangular map, or steer at the disc's "
+                        "own cells and skip the interpolation")
     a = p.parse_args()
     train(subset=a.subset, K=a.K, subbands=a.subbands, seed=a.seed, lr=a.lr, loss=a.loss,
           batch=a.batch, base=a.base, depth=a.depth, max_epochs=a.max_epochs,
           patience=a.patience, min_epochs=a.min_epochs, device=a.device, tag=a.tag,
-          polar=a.polar)
+          polar=a.polar, disc=a.disc)

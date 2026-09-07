@@ -6,8 +6,12 @@ skipped, which makes the whole battery resumable after a crash, a reboot, or a d
 
     .venv/bin/python utils/detach.py logs/headline.log -- \
         .venv/bin/python -u utils/run_grid.py headline
+
+Set `RUN_GRID_STOP_HOUR` to give an unattended queue a curfew: no cell starts once that hour has
+passed. Resuming later picks up exactly where it stopped.
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -65,15 +69,56 @@ BATTERIES = {
     # Stage G. Only runs if utils/check_history_depth.py says accuracy was still climbing at
     # five frames; if it had saturated, this battery is the thing we deliberately do not run.
     "k9": [{"subset": "device3", "K": 9, "seed": s} for s in (0, 1, 2)],
+
+    # --- second pass: the 2x2 of layout against loss -------------------------------------
+    # Four cells at all24 K=1, two of which are already on disk (rect+wce, resampled disc+wce),
+    # so that every comparison below changes exactly one thing:
+    #   tversky        rect + Tversky vs rect + wce          isolates the loss
+    #   polarnative    native disc + wce vs resampled + wce  isolates the interpolation
+    #   polarnative_tversky                                  the interaction
+    # Tversky is the paper's own loss (alpha 0.3, beta 0.7) and had never been run here at all.
+    # Judged on mean azimuth error in the 100-200 m bin, which is where the disc was supposed to
+    # help and where it lost by 25 degrees, not on the pooled hit rate that hid the effect.
+    "tversky": [{"subset": "all24", "K": 1, "seed": s, "loss": "tversky"} for s in (0, 1, 2)],
+    "polarnative": [{"subset": "all24", "K": 1, "seed": s, "polar": True, "disc": "native"}
+                    for s in (0, 1, 2)],
+    "polarnative_tversky": [{"subset": "all24", "K": 1, "seed": s, "polar": True,
+                             "disc": "native", "loss": "tversky"} for s in (0, 1, 2)],
+
+    # The cell the headline claim admits is missing. device3 at K=9 reaches 73.2% and is
+    # currently compared against all24 at K=1, so the report has to hedge: "not a statement that
+    # six microphones beat twenty-four, since we never trained all 24 at K=9". This trains it.
+    # Unconditional, unlike everything above it — no gate, it completes a table.
+    "all24k9": [{"subset": "all24", "K": 9, "seed": s} for s in (0, 1, 2)],
 }
 
 
 def run_id(cfg: dict) -> str:
     from src.config import N_SUBBANDS
+    polar = ""
+    if cfg.get("polar"):
+        polar = "_polarn" if cfg.get("disc", "resample") == "native" else "_polar"
     return (f"{cfg['subset']}_K{cfg['K']}_w{cfg.get('base', WIDTH)}"
             f"_b{cfg.get('subbands', N_SUBBANDS)}_{cfg.get('loss', 'wce')}"
-            + ("_polar" if cfg.get("polar") else "")
-            + f"_s{cfg.get('seed', 0)}")
+            + polar + f"_s{cfg.get('seed', 0)}")
+
+
+def too_late() -> bool:
+    """True once RUN_GRID_STOP_HOUR has passed, if it is set.
+
+    Checked before every cell rather than once per battery, so an unattended queue stops at a
+    known hour instead of in the middle of whatever it happened to reach. Nothing is lost: a
+    battery skips the cells already on disk, so resuming costs no repeated work.
+    """
+    stop = os.environ.get("RUN_GRID_STOP_HOUR", "")
+    if not stop.strip():
+        return False
+    from datetime import datetime
+
+    if datetime.now().hour >= int(stop):
+        print(f"past {int(stop):02d}:00, stopping before the next cell", flush=True)
+        return True
+    return False
 
 
 def main(names: list[str]) -> int:
@@ -88,6 +133,10 @@ def main(names: list[str]) -> int:
           f"{len(pending)} to run\n", flush=True)
     t0 = time.time()
     for i, cfg in enumerate(pending, 1):
+        if too_late():
+            print(f"{len(pending) - i + 1} cells left unrun: "
+                  f"{', '.join(run_id(c) for c in pending[i - 1:])}", flush=True)
+            break
         print(f"=== [{i}/{len(pending)}] {run_id(cfg)}   "
               f"{(time.time() - t0) / 60:.0f} min elapsed", flush=True)
         try:

@@ -250,15 +250,65 @@ def load_run(run_id: str, device: str = "auto"):
     return model, saved, (cfg["input_mean"], cfg["input_std"]), bank, dev
 
 
+def ambient_reference_energy(data: SplitData) -> float:
+    """Median in-band energy of one channel-frame of our own *training* no-drone audio.
+
+    This is the level DEMAND scenes get matched to before they are used as training negatives.
+    It has to come from the training split: `utils/demand_false_alarms.py` takes the same
+    statistic from test 2, which is right for an evaluation that must be in the units the
+    reported threshold lives in, and would be a leak here.
+
+    Taken straight off the labelled frames rather than by sampling batches, because batches are
+    bucketed by segment: unshuffled, the first several hundred are all from the first flight and
+    contain no negatives at all, and a shuffled sample would make the reference level depend on
+    the seed.
+    """
+    got = []
+    for X, meta in zip(data.X, data.meta):
+        quiet = ~meta["has_drone"].astype(bool)
+        if quiet.any():
+            got.append((np.abs(X[quiet]) ** 2).sum(-1).reshape(-1))
+    if not got:
+        raise ValueError("no no-drone frames in the training data to level-match against")
+    return float(np.median(np.concatenate(got)))
+
+
+def ambient_pool(groups, data: SplitData, K: int, verbose: bool = True):
+    """(n, K, 1, F) complex64 stacks of DEMAND ambient from `groups`, in our own units.
+
+    Single channel, because the detector reads one microphone at a time. Replicating a mono
+    recording across 24 channels would hand the map model a spatial pattern no source produces,
+    which is why this path exists only for the per-channel detector.
+    """
+    from . import demand
+
+    ref = ambient_reference_energy(data)
+    amb = demand.Ambient(reference_energy=ref, verbose=verbose)
+    scenes = [s for g in groups for s in demand.GROUPS[g] if s in amb.scenes]
+    pool = np.concatenate([amb.frames(s, K=K, channels=1) for s in scenes])
+    if verbose:
+        print(f"  ambient negatives: {len(pool)} frames "
+              f"({len(pool) * 0.1 / 60:.1f} min) from {len(scenes)} scenes in "
+              f"{', '.join(groups)}, level-matched to our training ambient ({ref:.3e})")
+    return pool, scenes, ref
+
+
 def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: int = 32,
           epochs: int = 12, patience: int = 4, device: str = "auto", tag: str = "",
           verbose: bool = True, train_segs=None, val_segs=None, confusers: bool = False,
-          mix_prob: float = 0.5, log_bins: int = 0, monitor_fraction: float = 0.0) -> dict:
+          mix_prob: float = 0.5, log_bins: int = 0, monitor_fraction: float = 0.0,
+          ambient_groups=None, ambient_frac: float = 0.3) -> dict:
     """One detector. `confusers` mixes ESC-50 into training frames, `log_bins` switches the
     frequency axis to a log-spaced filterbank of that many bins (0 keeps the linear axis).
 
     `monitor_fraction > 0` moves early stopping onto the tail of the *training* scenes, which is
     required whenever the validation set is a held-out scene whose number will be reported.
+
+    `ambient_groups` names DEMAND scene groups to draw extra negatives from, `ambient_frac` how
+    many relative to the channel-frames in each batch. This is addition, not mixing: the frames
+    are real continuous ambient labelled no-drone, which is the thing the detector was firing on
+    at 24,881 alarms per hour. Groups not named here are what the false-alarm rate is then
+    measured on, so the question stays "does hearing real ambient generalize to other ambient".
     """
     from .beamform import pick_device
 
@@ -266,7 +316,8 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
     rng = np.random.default_rng(seed)
     dev = pick_device(device)
     run_id = (f"detector_K{K}_w{width}" + ("_conf" if confusers else "")
-              + (f"_log{log_bins}" if log_bins else "") + f"_s{seed}"
+              + (f"_log{log_bins}" if log_bins else "")
+              + ("_amb" if ambient_groups else "") + f"_s{seed}"
               + (f"_{tag}" if tag else ""))
     out = RUNS / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -311,9 +362,17 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
     m = 20.0 * torch.log10(mag + 1e-9)
     stats = (float(m.mean()), float(m.std()))
 
+    pool = pool_scenes = None
+    if ambient_groups:
+        pool, pool_scenes, _ = ambient_pool(ambient_groups, train_data, K, verbose=verbose)
+
     drone_rate = train_data.positive_rate
+    # Ambient negatives change the balance the loss has to be weighted against: every added
+    # frame is a negative, so the effective positive rate falls by 1/(1+ambient_frac) and a
+    # pos_weight computed from our own frames alone would over-weight the drone class.
+    effective_rate = drone_rate / (1.0 + (ambient_frac if ambient_groups else 0.0))
     model = SpectralDetector(K, width).to(dev)
-    pw = torch.tensor((1 - drone_rate) / max(drone_rate, 1e-6), device=dev)
+    pw = torch.tensor((1 - effective_rate) / max(effective_rate, 1e-6), device=dev)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     if verbose:
         n_bins = log_bins or len(train_data.freqs)
@@ -331,6 +390,14 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
             x = spectra(X.to(dev), *stats, bank=bank)
             # Every channel of a frame inherits the frame's label.
             y = present.to(dev).unsqueeze(1).expand(-1, len(channels)).reshape(-1)
+            if pool is not None:
+                # Sampled with replacement each batch rather than iterated: the pool is 45
+                # minutes of ambient against 60 of ours, and an epoch defined by our frames
+                # should see a fresh draw of it rather than a fixed pairing.
+                pick = rng.integers(0, len(pool), max(1, int(round(ambient_frac * len(y)))))
+                xa = spectra(torch.from_numpy(pool[pick]).to(dev), *stats, bank=bank)
+                x = torch.cat([x, xa])
+                y = torch.cat([y, torch.zeros(len(xa), device=dev)])
             loss = F.binary_cross_entropy_with_logits(model(x), y, pos_weight=pw)
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -366,6 +433,10 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
                          "batch": batch, "channels": channels, "band": list(CACHE_BAND),
                          "input_mean": stats[0], "input_std": stats[1],
                          "n_params": model.n_params, "train_drone_rate": drone_rate,
+                         "effective_drone_rate": effective_rate,
+                         "ambient_groups": list(ambient_groups) if ambient_groups else [],
+                         "ambient_scenes": pool_scenes or [],
+                         "ambient_frac": ambient_frac if ambient_groups else 0.0,
                          "confusers": confusers, "mix_prob": mix_prob,
                          "log_bins": log_bins, "monitor_fraction": monitor_fraction,
                          "early_stopping_on": ("interleaved blocks of the training scenes"
@@ -410,7 +481,12 @@ if __name__ == "__main__":
     p.add_argument("--mix-prob", type=float, default=0.5)
     p.add_argument("--log-bins", type=int, default=0,
                    help="log-spaced filterbank of this many bins; 0 keeps the linear axis")
+    p.add_argument("--ambient-groups", nargs="*", default=None,
+                   help="DEMAND scene groups to draw extra training negatives from; the rest "
+                        "are what the false-alarm rate is then measured on")
+    p.add_argument("--ambient-frac", type=float, default=0.3)
     a = p.parse_args()
     train(K=a.K, width=a.width, seed=a.seed, lr=a.lr, batch=a.batch, epochs=a.epochs,
           device=a.device, tag=a.tag, confusers=a.confusers, mix_prob=a.mix_prob,
-          log_bins=a.log_bins)
+          log_bins=a.log_bins, ambient_groups=a.ambient_groups,
+          ambient_frac=a.ambient_frac)
