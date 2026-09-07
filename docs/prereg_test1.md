@@ -126,3 +126,30 @@ The pattern in the four misses is worth naming. Predictions 2 and 3 were both be
 representation change could not help, and prediction 7 was a bet that a mechanism which worked on
 one array would work on another. We were most wrong where we assumed a result would transfer, which
 is the same lesson the detection experiments taught in a different currency.
+
+## Second registration, 7 September 2026: the native disc at K=9
+
+One combination is left untested, and it is the one where our two far-field mechanisms meet:
+`device3`, nine frames, natively steered disc, weighted cross-entropy, three seeds. Registered
+before the battery starts. Compared against `device3_K9_w32_b16_wce_s?`, which reads 73.2% ± 1.4
+pooled, and against the all24 K=1 disc cells for the far bin.
+
+12. **Pooled `hit_10deg` does not separate from the rectangular K=9 baseline**, staying inside
+    73.2% ± 1.4 either way. Confidence: high, around 80%. Every layout change we have made moved
+    the pooled number by less than the seed spread, including the disc cells that moved the far bin
+    a lot, because the far bin is 2.5% of frames.
+13. **The far-bin azimuth error improves against the rectangular K=9 cell.** Confidence: moderate,
+    around 60%. This is the whole point of running it and the mechanism is measured (notes 36), but
+    it is a bet that the disc's gain survives on a different array and at a different depth, and
+    the last time we bet on transfer — prediction 7 — we lost.
+14. **The two effects do not fully compound.** Concretely: the improvement is smaller than the
+    8.7° the disc bought at all24 K=1. Confidence: moderate, around 65%. Both mechanisms attack
+    the same failure, a low-contrast peak competing with phantoms, so whichever runs first should
+    take most of what is available. If instead the gain is *larger* than 8.7°, the two are
+    attacking different things and the far field has more headroom than we have claimed.
+15. **Nothing here will pass a significance test.** Confidence: very high, around 95%. Same two
+    crossings and same three seeds as before, so a win can only ever be a point estimate. This is
+    registered so that a good-looking number cannot be reported as more than that.
+
+**Test 1 stays sealed regardless.** The conditions in the section above are unchanged and this run
+cannot meet them on its own: prediction 15 says the significance requirement fails by construction.

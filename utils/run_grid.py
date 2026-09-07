@@ -90,6 +90,20 @@ BATTERIES = {
     # six microphones beat twenty-four, since we never trained all 24 at K=9". This trains it.
     # Unconditional, unlike everything above it — no gate, it completes a table.
     "all24k9": [{"subset": "all24", "K": 9, "seed": s} for s in (0, 1, 2)],
+
+    # --- the last untested combination ---------------------------------------------------
+    # Two separate things each buy accuracy in the far field, and for reasons that sound
+    # independent: the natively steered disc because it stops smearing a low-contrast peak
+    # across cells (notes 36), and nine frames of history because persistence averages while
+    # phantoms flicker (notes 41). Nothing says whether they compound, cancel, or overlap.
+    #
+    # `device3`, not `all24`, because history only pays where microphones are scarce (notes 37)
+    # and an arm on the array that gains nothing from depth could not answer the question.
+    # Weighted CE, not Tversky, even though Tversky owns the best far-bin number we have: the
+    # comparison is against `device3_K9_w32_b16_wce_s?` and one variable moves at a time. If the
+    # disc survives here, Tversky on top of it is the natural follow-up.
+    "polarnative_k9": [{"subset": "device3", "K": 9, "seed": s, "polar": True, "disc": "native"}
+                       for s in (0, 1, 2)],
 }
 
 
