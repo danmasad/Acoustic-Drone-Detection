@@ -1,5 +1,5 @@
 ---
-title: "Hearing Drones in 3D: What a Cheap Microphone Array Can and Cannot Do"
+title: "Hearing Drones in 3D: Convolutional Detection and Direction-Finding from a Reduced Microphone Array"
 author: "Shai Livshits, Dan Masad"
 date: ""
 geometry: margin=0.65in
@@ -26,7 +26,7 @@ header-includes: |
   \setlist[itemize]{itemsep=0pt,topsep=1pt,parsep=0pt,leftmargin=1.1em}
 ---
 
-**Category:** Applied — Audio / Convolutional Networks / Defense & Security.
+**Project Category:** Applied — Audio / Convolutional Networks / Defense & Security.
 **Code:** [github.com/danmasad/Acoustic-Drone-Detection](https://github.com/danmasad/Acoustic-Drone-Detection)
 
 ## 1. Motivation and problem definition
