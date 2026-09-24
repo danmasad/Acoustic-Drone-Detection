@@ -10,7 +10,7 @@ Presence is combined as the mean *logit*, not the mean probability. float32 sigm
 to exactly 1.0 above a logit of about 17, and ties at 1.0 once turned a working head into an
 AUROC of 0.5000; the mean logit ranks frames the same way a geometric mean of odds would.
 
-Needs each member's full mask logits, which only `src/predict.py --heatmaps` writes (to
+Needs each member's full mask logits, which only `python -m src.predict --heatmaps` writes (to
 `cache/heatmaps/`, 128 MB a run on test 2), so this runs wherever the STFT cache does. Only the
 rectangular grid is supported; the polar disc has its own decoder inputs.
 
@@ -19,7 +19,7 @@ to float32 precision, the presence score exactly, and the grid-snapped argmax on
 99.9% of frames. The grid index is the argmax of float64 probabilities here and of logits in
 the dump, which can only disagree on a tie that float64 sigmoid saturation creates.
 
-Run: .venv/bin/python src/predict.py --runs <members> --heatmaps
+Run: .venv/bin/python -m src.predict --runs <members> --heatmaps
      .venv/bin/python utils/ensemble.py [--cells all24_K1_w32_b16_wce ...]
      .venv/bin/python utils/ensemble.py --self-test      # no data needed
 """
@@ -74,7 +74,7 @@ def load_member(run_id: str, split: str) -> tuple[dict, np.ndarray]:
         raise SystemExit(f"{run_id}: polar runs are not supported")
     path = predict.heatmap_path(name)
     if not path.exists():
-        raise SystemExit(f"{path} missing: run src/predict.py --runs {run_id} "
+        raise SystemExit(f"{path} missing: run python -m src.predict --runs {run_id} "
                          f"--split {split} --heatmaps")
     h = np.load(path, mmap_mode="r")
     if len(h) != len(d["score"]):

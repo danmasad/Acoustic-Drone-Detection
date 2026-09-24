@@ -24,6 +24,7 @@ original run id. A run with any non-default flag gets them spelled out in its ru
 - `presence_weight`: weight of the presence term against the mask term.
 """
 import argparse
+import collections
 import json
 import subprocess
 import time
@@ -252,7 +253,11 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
           base: int = 32, depth: int = 3, max_epochs: int = EARLY["max_epochs"],
           patience: int = EARLY["patience"], min_epochs: int = EARLY["min_epochs"],
           device: str = "auto", tag: str = "", polar: bool = False,
-          disc: str = "resample", verbose: bool = True, **protocol) -> dict:
+          disc: str = "resample", verbose: bool = True, save_last: int = 0,
+          **protocol) -> dict:
+    """`save_last` keeps the weights of the final N epochs in `runs/<id>/last/` for
+    `utils/average_checkpoints.py`. It changes nothing about training, so it is not part of
+    the run id or the protocol."""
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
@@ -327,6 +332,7 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
               f"pos_weight {float(loss_fn.pw):.0f}, device {dev}")
 
     best, best_epoch, best_state, history = -np.inf, -1, None, []
+    last = collections.deque(maxlen=save_last) if save_last > 0 else None
     for epoch in range(max_epochs):
         model.train()
         t0, tot, n = time.time(), 0.0, 0
@@ -357,6 +363,9 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
             else:
                 sched.step()
         history.append(m)
+        if last is not None:
+            last.append((epoch, {k: v.detach().cpu().clone()
+                                 for k, v in model.state_dict().items()}))
         if verbose:
             print(f"  epoch {epoch:>2}  {m['seconds']:>5.0f}s  train {m['train_loss']:.4f}  "
                   f"val {m['val_loss']:.4f}  AUROC {m['auroc']:.4f} "
@@ -376,6 +385,11 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
         torch.save(best_state, out / "best.pt")
     ev = {"stats": stats, "loss_fn": loss_fn, "proj": proj, "frame_norm": frame_norm}
     result = {"config": cfg, "best_epoch": best_epoch, "epochs_run": len(history)}
+    if last is not None:
+        (out / "last").mkdir(exist_ok=True)
+        for e, state in last:
+            torch.save(state, out / "last" / f"epoch{e:02d}.pt")
+        result["saved_epochs"] = [e for e, _ in last]
     if changes:
         result["monitor"] = evaluate(model, val_data, bfs_val, **ev)
     for key, data in tests.items():
@@ -412,6 +426,8 @@ if __name__ == "__main__":
     p.add_argument("--min-epochs", type=int, default=EARLY["min_epochs"])
     p.add_argument("--device", default="auto")
     p.add_argument("--tag", default="")
+    p.add_argument("--save-last", type=int, default=0,
+                   help="keep the final N epochs' weights for utils/average_checkpoints.py")
     p.add_argument("--polar", action="store_true",
                    help="project the map onto the zenith disc; see src/polar.py")
     p.add_argument("--disc", default="resample", choices=["resample", "native"],
@@ -436,7 +452,7 @@ if __name__ == "__main__":
     train(subset=a.subset, K=a.K, subbands=a.subbands, seed=a.seed, lr=a.lr, loss=a.loss,
           batch=a.batch, base=a.base, depth=a.depth, max_epochs=a.max_epochs,
           patience=a.patience, min_epochs=a.min_epochs, device=a.device, tag=a.tag,
-          polar=a.polar, disc=a.disc, val_split=a.val_split, fold=a.fold,
+          polar=a.polar, disc=a.disc, save_last=a.save_last, val_split=a.val_split, fold=a.fold,
           schedule=a.schedule, clip=a.clip, weight_decay=a.weight_decay,
           encoder_dropout=a.encoder_dropout, input_norm=a.input_norm, label_lag=a.label_lag,
           far_weight=a.far_weight, presence_weight=a.presence_weight)
