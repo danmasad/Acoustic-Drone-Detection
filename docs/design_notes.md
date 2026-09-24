@@ -2471,3 +2471,61 @@ before any near-field ablation is trained. Until then this is a pattern on two a
 flight with the mechanism open, not a demonstration; the frame-level caveats of notes 40 apply.
 The near-field weakness of notes 25 now has a location — the loudest `all24` frames — if not yet
 a cause.
+
+## 47. Signal checks: the labels run about 0.4 s ahead of the audio, beyond propagation
+
+`utils/check_signal.py` runs three of Phase 1's missing checks from the committed test-2 dumps,
+which already hold every frame's prediction, label, range, segment and frame index. Test 1 is not
+touched. The gate is that at zero shift every predictor reproduces its stored hit rate (delay-and-
+sum from `results/baseline.json`, the six U-Net runs from their `metrics.json`) to 1e-6. Output:
+`results/signal_checks.json`, `figures/signal_checks_test_2.png`.
+
+**Coverage.** Test 2's 11,927 drone frames have a median range of 46 m (5–95%: 7–95 m). Only 3%
+are beyond 100 m and 14% are above 60° elevation. Azimuth is concentrated: 49% of frames fall
+between -45° and +45°. The headline number is therefore mostly a statement about 20–70 m, a
+narrow band of bearings, and one flight.
+
+**Alignment lag.** Audio frame k is paired with GPS row k. Sound needs r/c to arrive, one 100 ms
+frame per 34 m, so propagation alone predicts that prediction k best matches label k − r/(c·dt):
+−0.4 frames at the 0–30 m bin's median range and −2.3 at 60–100 m. Each predictor is scored
+against labels shifted by −40 to +40 frames, on one common set of frames for every shift. A lag
+is read only where the predictor tracks the drone (median error under 15° at zero shift): both
+U-Nets out to 100 m, and delay-and-sum only at 0–30 m. Elsewhere the error curve is flat, and its
+minimum wanders to the edge of the sweep.
+
+| Predictor, range | Best lag (frames) | Propagation | Residual |
+|---|---|---|---|
+| U-Net `all24` K=1, 0–30 / 30–60 / 60–100 m | −4.3 / −5.7 / −6.1 | −0.4 / −1.3 / −2.3 | −3.8 / −4.4 / −3.8 |
+| U-Net `device3` K=1, same bins | −3.7 / −5.1 / −6.3 | same | −3.3 / −3.7 / −4.0 |
+| Delay-and-sum `all24` / `device3`, 0–30 m | −5.9 / −6.0 | −0.4 | −5.4 / −5.6 |
+
+The best lag grows with range at about the propagation rate. On top of that sits a nearly
+constant residual of 3.3 to 5.6 frames. So the audio describes where the drone was roughly
+0.35–0.55 s before its label says, over and above sound travel. A single-frame model cannot learn
+to compensate, since it sees no motion, so this is a property of the data and not of the network.
+Delay-and-sum, which has no training at all, shows the same residual, which rules out anything
+the U-Net learned. The likely candidates are a clock or logging offset between the recorders and
+the flight log, or a timestamp convention in the log. Neither has been checked against the
+dataset's documentation.
+
+What it costs is small. Shifting the labels to the best lag raises hit@10 by 0.6–1.0 pp overall
+and by 1.4–2.5 pp at 0–30 m, where the drone moves fastest across the sky. Propagation-only
+emission-time labels (`labels.propagation_lagged`, the `label_lag` flag of B3) recover only
+0.2–0.5 pp, because propagation is the smaller part of the lag. The residual is measured here on
+test 2, so it cannot become a training parameter without selecting on the reported split. It has
+to be estimated on the training sessions, from delay-and-sum at 0–30 m, which uses no model, and
+that needs the cache. If the offset differs between sessions, it is also a source of the
+between-scene variance the LOFO folds measure.
+
+**Signed azimuth bias**, on frames already within 20° and below 60° elevation, with 300-frame
+block-bootstrap intervals: U-Net `all24` +1.6° [+0.2, +2.6], U-Net `device3` −0.6° [−1.7, +0.6],
+delay-and-sum (grid-snapped) +3.8° and +6.6°. Re-measured against the lag-shifted labels, the
+bias moves by about 0.2°, so it is not the lag in disguise. A heading error of a few degrees at
+most is not a lever against a 10° threshold.
+
+**Still waiting on the cache:** the spectrogram (`--spectrogram`), and the recorder-sync check
+notes 46 asked for (`--recorders`). The latter fits the four recorders' clock offsets from
+GCC-PHAT delays of all 276 microphone pairs, with each frame's direction and three offsets solved
+jointly and no labels involved, against a gate of one sample. On a synthetic recording with
+planted offsets of 3, −2 and 5.5 samples it recovers them within 0.3 samples, including with a
+strongly harmonic source. Its answer decides between the two causes notes 46 left open.
