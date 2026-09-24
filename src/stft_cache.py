@@ -14,9 +14,9 @@ import time
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, get_window
 
-from .config import (BYTES_PER_SAMPLE, CACHE_BAND, CH_PER_DEVICE, CHUNK, N_CHANNELS,
+from .config import (BYTES_PER_SAMPLE, CACHE, CACHE_BAND, CH_PER_DEVICE, CHUNK, N_CHANNELS,
                      SR, Segment, segments)
 from .labels import frame_labels
 
@@ -25,6 +25,24 @@ from .labels import frame_labels
 # first so it cannot leak up through the sidelobes of a rectangular analysis window.
 FILTER_BAND = (200.0, 8000.0)
 FILTER_ORDER = 5
+
+# "rect" is the inherited analysis window and keeps the original cache/ layout. Any other
+# window caches under cache_<window>/, so both can exist side by side.
+WINDOWS = ("rect", "hann")
+
+
+def cache_dir(seg: Segment, window: str = "rect") -> Path:
+    if window not in WINDOWS:
+        raise ValueError(f"unknown window {window!r}, expected one of {WINDOWS}")
+    return seg.cache_dir if window == "rect" else CACHE.parent / f"cache_{window}" / seg.id
+
+
+def taper(window: str) -> np.ndarray | None:
+    """(CHUNK,) analysis window scaled to unit mean, so tonal levels match the rect cache."""
+    if window == "rect":
+        return None
+    w = get_window(window, CHUNK, fftbins=True)
+    return (w / w.mean()).astype(np.float64)
 
 
 def wav_info(path: Path) -> tuple[int, int, int, int]:
@@ -90,9 +108,10 @@ class SegmentAudio:
 
 
 def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
-                overwrite: bool = False, verbose: bool = True) -> Path:
+                overwrite: bool = False, verbose: bool = True, window: str = "rect") -> Path:
     """Write cache/<segment id>/{stft.npy, meta.npz}. Returns the segment's cache dir."""
-    out_dir = seg.cache_dir
+    out_dir = cache_dir(seg, window)
+    win = taper(window)
     stft_path, meta_path = out_dir / "stft.npy", out_dir / "meta.npz"
     if stft_path.exists() and meta_path.exists() and not overwrite:
         if verbose:
@@ -124,6 +143,8 @@ def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
         blk = filtfilt(b, a, audio.read(lo, hi - lo), axis=0)
         head = f0 * CHUNK - lo
         blk = blk[head:head + nf * CHUNK].reshape(nf, CHUNK, N_CHANNELS)
+        if win is not None:
+            blk = blk * win[None, :, None]
         stft[f0:f0 + nf] = np.fft.rfft(blk, axis=1)[:, sel].transpose(0, 2, 1)
         if verbose:
             done = f0 + nf
@@ -138,14 +159,16 @@ def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
              session=seg.session, flight_id=seg.flight_id, name=seg.name,
              has_drone_segment=seg.has_drone, band=np.array(band),
              skip_seconds=seg.skip_seconds, starts=np.array(audio.starts),
-             **labels)
+             window=window, **labels)
     return out_dir
 
 
-def load_cache(seg: Segment, mmap: bool = True) -> tuple[np.ndarray, dict]:
+def load_cache(seg: Segment, mmap: bool = True,
+               window: str = "rect") -> tuple[np.ndarray, dict]:
     """(n, 24, F) complex64 spectra and the meta dict, index-aligned by construction."""
-    stft = np.load(seg.cache_dir / "stft.npy", mmap_mode="r" if mmap else None)
-    meta = dict(np.load(seg.cache_dir / "meta.npz", allow_pickle=False))
+    d = cache_dir(seg, window)
+    stft = np.load(d / "stft.npy", mmap_mode="r" if mmap else None)
+    meta = dict(np.load(d / "meta.npz", allow_pickle=False))
     if len(stft) != int(meta["n_frames"]):
         raise ValueError(f"{seg.id}: {len(stft)} frames cached, meta says {meta['n_frames']}")
     return stft, meta
@@ -157,12 +180,13 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Build the STFT cache for every segment.")
     p.add_argument("--only", help="substring filter on segment id")
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--window", default="rect", choices=WINDOWS)
     args = p.parse_args()
 
     total = 0.0
     for seg in segments():
         if args.only and args.only not in seg.id:
             continue
-        d = build_cache(seg, overwrite=args.overwrite)
+        d = build_cache(seg, overwrite=args.overwrite, window=args.window)
         total += (d / "stft.npy").stat().st_size / 2**30
     print(f"cache total {total:.2f} GiB")
