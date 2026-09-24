@@ -20,6 +20,10 @@ from torch import nn
 
 from .config import AZ, EL
 
+NORM_LAYERS = ("batch", "group")
+GROUPS = 8
+LOSSES = ("wce", "tversky", "dice")
+
 
 def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float = 0.5,
                 dirs: torch.Tensor | None = None,
@@ -109,10 +113,13 @@ class Conv(nn.Module):
     left rim to its right rim — two directions 180 degrees apart.
     """
 
-    def __init__(self, cin: int, cout: int, wrap: bool = True):
+    def __init__(self, cin: int, cout: int, wrap: bool = True, norm: str = "batch"):
         super().__init__()
         self.conv = nn.Conv2d(cin, cout, 3, padding=0, bias=False)
-        self.norm = nn.BatchNorm2d(cout)
+        # GroupNorm normalizes each example on its own, so a batch drawn from one segment
+        # (which `SplitData.batches` always yields) cannot shift another's statistics.
+        self.norm = (nn.BatchNorm2d(cout) if norm == "batch"
+                     else nn.GroupNorm(min(GROUPS, cout), cout))
         self.wrap = wrap
 
     def forward(self, x):
@@ -123,9 +130,9 @@ class Conv(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, cin: int, cout: int, wrap: bool = True):
+    def __init__(self, cin: int, cout: int, wrap: bool = True, norm: str = "batch"):
         super().__init__()
-        self.a, self.b = Conv(cin, cout, wrap), Conv(cout, cout, wrap)
+        self.a, self.b = Conv(cin, cout, wrap, norm), Conv(cout, cout, wrap, norm)
 
     def forward(self, x):
         return self.b(self.a(x))
@@ -135,22 +142,25 @@ class UNet(nn.Module):
     """(B, C, 23, 91) maps -> per-pixel logits of the same size, plus one presence logit."""
 
     def __init__(self, in_channels: int, base: int = 64, depth: int = 3,
-                 dropout: float = 0.1, wrap: bool = True, encoder_dropout: float = 0.0):
+                 dropout: float = 0.1, wrap: bool = True, encoder_dropout: float = 0.0,
+                 norm_layer: str = "batch"):
         super().__init__()
+        if norm_layer not in NORM_LAYERS:
+            raise ValueError(f"norm_layer must be one of {NORM_LAYERS}")
         chans = [base * 2 ** i for i in range(depth)]
         self.down = nn.ModuleList()
         c = in_channels
         for ch in chans:
-            self.down.append(Block(c, ch, wrap))
+            self.down.append(Block(c, ch, wrap, norm_layer))
             c = ch
         # Channel dropout after every encoder block. Built only when asked for, so a default
         # model draws the same random numbers as every run trained before the option existed.
         self.enc_drop = nn.Dropout2d(encoder_dropout) if encoder_dropout > 0 else None
-        self.bottleneck = Block(c, c * 2, wrap)
+        self.bottleneck = Block(c, c * 2, wrap, norm_layer)
         self.up = nn.ModuleList()
         c = c * 2
         for ch in reversed(chans):
-            self.up.append(Block(c + ch, ch, wrap))
+            self.up.append(Block(c + ch, ch, wrap, norm_layer))
             c = ch
         self.drop = nn.Dropout2d(dropout)
         self.mask_head = nn.Conv2d(c, 1, 1)
@@ -206,7 +216,8 @@ class Loss(nn.Module):
     `kind='wce'` is class-weighted cross-entropy, the default: about 2% of pixels are
     positive, so an unweighted loss is minimized by predicting empty sky everywhere.
     `kind='tversky'` is the paper's choice, kept as the one alternative the step 4 sanity
-    check compares.
+    check compares. `kind='dice'` is Tversky with alpha = beta = 0.5, which punishes misses
+    and false positives equally.
     """
 
     def __init__(self, kind: str = "wce", pos_weight: float = 40.0,
@@ -230,6 +241,8 @@ class Loss(nn.Module):
             loc = F.binary_cross_entropy_with_logits(mask_logits, mask, pos_weight=self.pw)
         elif self.kind == "tversky":
             loc = tversky_loss(mask_logits, mask)
+        elif self.kind == "dice":
+            loc = tversky_loss(mask_logits, mask, alpha=0.5, beta=0.5)
         else:
             raise ValueError(f"unknown loss {self.kind}")
         det = F.binary_cross_entropy_with_logits(presence_logit, present, pos_weight=self.ppw)
@@ -241,6 +254,8 @@ class Loss(nn.Module):
                                                      reduction="none").mean((-2, -1))
         elif self.kind == "tversky":
             loc = tversky_loss(mask_logits, mask, reduce=False)
+        elif self.kind == "dice":
+            loc = tversky_loss(mask_logits, mask, alpha=0.5, beta=0.5, reduce=False)
         else:
             raise ValueError(f"unknown loss {self.kind}")
         det = F.binary_cross_entropy_with_logits(presence_logit, present, pos_weight=self.ppw,

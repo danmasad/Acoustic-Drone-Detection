@@ -115,18 +115,24 @@ def propagation_lagged(meta: dict, iterations: int = 3) -> dict:
     return out
 
 
-def target_mask(az, el, radius_deg: float, chunk: int = 2048) -> np.ndarray:
+def target_mask(az, el, radius_deg: float, chunk: int = 2048, soft: bool = False) -> np.ndarray:
     """(n, 23, 91) uint8: 1 within radius_deg of the labelled direction.
 
     A disc on the sphere rather than a rectangle on the grid, so the target does not
     stretch as elevation rises and azimuth cells crowd together. Frames with no drone get
     an all-zero mask.
+
+    `soft` gives float32 instead (float16 rounds pixels just outside the radius up to exactly
+    0.5, so the disc would no longer be recoverable): a Gaussian in angular distance scaled to be exactly 0.5 at
+    `radius_deg`, so the centroid decoder's 0.5 threshold on a perfect prediction lights the
+    same disc the hard target draws, while pixels near the edge stop being all-or-nothing.
     """
     from .config import GRID_SHAPE
 
     dirs = directions()                                          # (D, 3)
     az, el = np.asarray(az, float), np.asarray(el, float)
-    out = np.zeros((len(az),) + GRID_SHAPE, dtype=np.uint8)
+    out = np.zeros((len(az),) + GRID_SHAPE, dtype=np.float32 if soft else np.uint8)
+    sigma = radius_deg / np.sqrt(2.0 * np.log(2.0))
     for i in range(0, len(az), chunk):
         a, e = az[i:i + chunk], el[i:i + chunk]
         ok = ~np.isnan(a)
@@ -137,8 +143,11 @@ def target_mask(az, el, radius_deg: float, chunk: int = 2048) -> np.ndarray:
                         np.sin(np.radians(e))], axis=-1)          # (b, 3)
         src[~ok] = 0.0
         ang = np.degrees(np.arccos(np.clip(dirs @ src.T, -1.0, 1.0)))   # (D, b)
-        m = (ang.T <= radius_deg).reshape((-1,) + GRID_SHAPE)
-        m[~ok] = False
+        if soft:
+            m = np.exp(-0.5 * (ang.T / sigma) ** 2).reshape((-1,) + GRID_SHAPE)
+        else:
+            m = (ang.T <= radius_deg).reshape((-1,) + GRID_SHAPE)
+        m[~ok] = 0
         out[i:i + chunk] = m
     return out
 

@@ -22,6 +22,9 @@ original run id. A run with any non-default flag gets them spelled out in its ru
 - `far_weight`: per-example loss weight rising linearly from 1 at 60 m to 1 + far_weight at
   120 m and beyond, for the frames the far-field failure lives in.
 - `presence_weight`: weight of the presence term against the mask term.
+- `augment` (`src/augment.py`), `norm_layer` (`group` for GroupNorm), `target` (`soft` for the
+  Gaussian target of `labels.target_mask`) and `nearfield_m` (steering focused at that range)
+  are the Phase 3 ablations. `--loss dice` is the fourth, and is a loss, not a protocol flag.
 """
 import argparse
 import collections
@@ -32,11 +35,11 @@ import time
 import numpy as np
 import torch
 
-from . import beamform, metrics
+from . import augment, beamform, metrics
 from . import polar as polar_grid
 from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, RUNS, SCENES, scene_segments
 from .data import SplitData, input_stats, to_maps
-from .models import Loss, UNet, decode_mask
+from .models import LOSSES, NORM_LAYERS, Loss, UNet, decode_mask
 
 EARLY = {"patience": 10, "min_delta": 0.001, "min_epochs": 15, "max_epochs": 60}
 
@@ -50,8 +53,10 @@ MONITOR = "hit_10deg"
 
 PROTOCOL = {"val_split": "test2", "fold": None, "schedule": "none", "clip": 0.0,
             "weight_decay": 0.0, "encoder_dropout": 0.0, "input_norm": "global",
-            "label_lag": False, "far_weight": 0.0, "presence_weight": 1.0}
+            "label_lag": False, "far_weight": 0.0, "presence_weight": 1.0,
+            "augment": False, "norm_layer": "batch", "target": "hard", "nearfield_m": 0.0}
 VAL_SPLITS = ("test2", "blocks", "lofo")
+TARGETS = ("hard", "soft")
 SCHEDULES = ("none", "plateau", "cosine")
 PLATEAU = {"factor": 0.5, "patience": 3}
 FAR_RAMP_M = (60.0, 120.0)
@@ -73,6 +78,10 @@ def protocol_changes(protocol: dict) -> dict:
         raise ValueError("fold is required with val_split='lofo' and meaningless without it")
     if p["fold"] is not None and p["fold"] not in SCENES:
         raise ValueError(f"fold must be one of {list(SCENES)}")
+    if p["norm_layer"] not in NORM_LAYERS:
+        raise ValueError(f"norm_layer must be one of {NORM_LAYERS}")
+    if p["target"] not in TARGETS:
+        raise ValueError(f"target must be one of {TARGETS}")
     return {k: p[k] for k in PROTOCOL if p[k] != PROTOCOL[k]}
 
 
@@ -90,9 +99,15 @@ def protocol_suffix(changes: dict) -> str:
             parts.append(f"{v}norm")
         elif k == "label_lag":
             parts.append("lag")
+        elif k == "augment":
+            parts.append("aug")
+        elif k == "norm_layer":
+            parts.append("gn")
+        elif k == "target":
+            parts.append(v)
         else:
             short = {"clip": "clip", "weight_decay": "wd", "encoder_dropout": "edo",
-                     "far_weight": "far", "presence_weight": "pw"}[k]
+                     "far_weight": "far", "presence_weight": "pw", "nearfield_m": "nf"}[k]
             parts.append(f"{short}{v:g}")
     return "_" + "-".join(parts) if parts else ""
 
@@ -121,23 +136,24 @@ def protocol_data(channels, K: int, polar: bool, p: dict, verbose: bool = True):
     where test 2 is both, as it always was."""
     from .detector import split_for_early_stopping
 
-    lag = p["label_lag"]
+    fit_kw = {"label_lag": p["label_lag"], "soft_target": p["target"] == "soft"}
     if p["val_split"] == "test2":
-        fit = SplitData("train", channels, K, verbose=verbose, polar=polar, label_lag=lag)
+        fit = SplitData("train", channels, K, verbose=verbose, polar=polar, **fit_kw)
         monitor = SplitData("test_2", channels, K, verbose=verbose, polar=polar)
         return fit, monitor, {"test_2": monitor}
     if p["val_split"] == "blocks":
-        full = SplitData("train", channels, K, verbose=verbose, polar=polar, label_lag=lag)
+        full = SplitData("train", channels, K, verbose=verbose, polar=polar, **fit_kw)
         tests = {"test_2": SplitData("test_2", channels, K, verbose=verbose, polar=polar)}
     else:
         rest = [n for n in SCENES if n != p["fold"]]
         full = SplitData(f"scenes {'+'.join(rest)}", channels, K, verbose=verbose,
-                         segs=scene_segments(rest), polar=polar, label_lag=lag)
+                         segs=scene_segments(rest), polar=polar, **fit_kw)
         held = f"scene_{p['fold']}"
         tests = {held: SplitData(held, channels, K, verbose=verbose,
                                  segs=scene_segments([p["fold"]]), polar=polar)}
     # The monitor is a view of the training scenes, so under label_lag it is scored against
-    # lagged labels too; only `tests` are guaranteed the dataset's own.
+    # lagged labels too, and under soft targets its val_loss is on soft masks; only `tests`
+    # are guaranteed the dataset's own.
     fit, monitor = split_for_early_stopping(full)
     return fit, monitor, tests
 
@@ -150,13 +166,17 @@ def git_sha() -> str:
         return "unknown"
 
 
-def beamformer_factory(data: SplitData, subbands: int, device, dirs=None, grid_shape=None):
+def beamformer_factory(data: SplitData, subbands: int, device, dirs=None, grid_shape=None,
+                       focus_m: float = 0.0):
     """One steering tensor per session calibration, memoized.
 
     `dirs` and `grid_shape` steer at a direction set other than the rectangular grid, which is
     what the natively steered polar disc uses instead of resampling a rectangular map.
+    `focus_m` is near-field steering (`beamform.Beamformer`).
     """
     extra = {} if dirs is None else {"dirs": dirs, "grid_shape": grid_shape}
+    if focus_m > 0:
+        extra["focus_m"] = focus_m
 
     def get(s: int):
         seg = data.segs[s]
@@ -268,6 +288,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     if p["input_norm"] == "frame" and polar:
         raise ValueError("input_norm='frame' is untested on the disc, whose dead cells would "
                          "enter every map's statistics")
+    if p["augment"] and polar:
+        raise ValueError("augment's azimuth roll needs the rectangular grid")
     run_id = run_name(subset, K, base, subbands, loss, polar, disc, seed, tag, changes)
     out = RUNS / run_id
     out.mkdir(parents=True, exist_ok=True)
@@ -286,6 +308,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     # Native steering changes where the beamformer points; resampling does not, so only the
     # native path hands a direction set to the factory.
     steer = ({"dirs": proj.steering_dirs, "grid_shape": proj.grid_shape} if native else {})
+    if p["nearfield_m"] > 0:
+        steer["focus_m"] = p["nearfield_m"]
     bfs_train = beamformer_factory(train_data, subbands, dev, **steer)
     bfs_val = beamformer_factory(val_data, subbands, dev, **steer)
     bfs_tests = {k: bfs_val if d is val_data else beamformer_factory(d, subbands, dev, **steer)
@@ -297,7 +321,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     drone_rate = train_data.positive_rate
     # No circular padding on the disc: its horizontal axis is an image coordinate, not an angle.
     model = UNet(K * subbands, base=base, depth=depth, wrap=not polar,
-                 encoder_dropout=p["encoder_dropout"]).to(dev)
+                 encoder_dropout=p["encoder_dropout"], norm_layer=p["norm_layer"]).to(dev)
+    aug_gen = torch.Generator().manual_seed(seed + 1) if p["augment"] else None
     loss_fn = Loss(loss, pos_weight=min(1.0 / max(pos_rate, 1e-6), 100.0),
                    presence_weight=p["presence_weight"],
                    presence_pos_weight=(1 - drone_rate) / max(drone_rate, 1e-6)).to(dev)
@@ -338,7 +363,12 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
         t0, tot, n = time.time(), 0.0, 0
         for s, X, mask, present, frames in train_data.batches(batch, rng=rng):
             bf = bfs_train(s)
-            x = to_maps(bf, X.to(bf.device), *stats, projection=proj, frame_norm=frame_norm)
+            X = X.to(bf.device)
+            if aug_gen is not None:
+                X = augment.spectra(X, aug_gen)
+            x = to_maps(bf, X, *stats, projection=proj, frame_norm=frame_norm)
+            if aug_gen is not None:
+                x, mask = augment.roll_azimuth(x, mask.to(bf.device), aug_gen)
             mask_logits, presence = model(x)
             weight = None
             if p["far_weight"] > 0:
@@ -416,7 +446,7 @@ if __name__ == "__main__":
     p.add_argument("--subbands", type=int, default=N_SUBBANDS)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--lr", type=float, default=5e-3)
-    p.add_argument("--loss", default="wce", choices=["wce", "tversky"])
+    p.add_argument("--loss", default="wce", choices=list(LOSSES))
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--base", type=int, default=32,
                    help="base filter count; 32 is 2.3x faster than their 64 and overfits less")
@@ -448,6 +478,12 @@ if __name__ == "__main__":
                    help="train on labels at sound-emission time")
     g.add_argument("--far-weight", type=float, default=PROTOCOL["far_weight"])
     g.add_argument("--presence-weight", type=float, default=PROTOCOL["presence_weight"])
+    g.add_argument("--augment", action="store_true",
+                   help="gain jitter, channel dropout, additive noise, azimuth roll (src/augment.py)")
+    g.add_argument("--norm-layer", default=PROTOCOL["norm_layer"], choices=list(NORM_LAYERS))
+    g.add_argument("--target", default=PROTOCOL["target"], choices=list(TARGETS))
+    g.add_argument("--nearfield-m", type=float, default=PROTOCOL["nearfield_m"],
+                   help="steer at this range with spherical wavefronts; 0 is plane waves")
     a = p.parse_args()
     train(subset=a.subset, K=a.K, subbands=a.subbands, seed=a.seed, lr=a.lr, loss=a.loss,
           batch=a.batch, base=a.base, depth=a.depth, max_epochs=a.max_epochs,
@@ -455,4 +491,5 @@ if __name__ == "__main__":
           polar=a.polar, disc=a.disc, save_last=a.save_last, val_split=a.val_split, fold=a.fold,
           schedule=a.schedule, clip=a.clip, weight_decay=a.weight_decay,
           encoder_dropout=a.encoder_dropout, input_norm=a.input_norm, label_lag=a.label_lag,
-          far_weight=a.far_weight, presence_weight=a.presence_weight)
+          far_weight=a.far_weight, presence_weight=a.presence_weight, augment=a.augment,
+          norm_layer=a.norm_layer, target=a.target, nearfield_m=a.nearfield_m)

@@ -94,6 +94,7 @@ class Run:
                          else polar_grid.Projection(device=self.dev))
         steer = ({"dirs": self.proj.steering_dirs, "grid_shape": self.proj.grid_shape}
                  if native else {})
+        steer["focus_m"] = self.p["nearfield_m"]
         self.fit, self.monitor, self.tests = protocol_data(cfg["channels"], cfg["K"], is_polar,
                                                            self.p, verbose=False)
         self.bfs_fit = beamformer_factory(self.fit, cfg["subbands"], self.dev, **steer)
@@ -111,7 +112,8 @@ class Run:
         c = self.cfg
         m = UNet(c["K"] * c["subbands"], base=c.get("base", 32), depth=c.get("depth", 3),
                  wrap=not c.get("polar", False),
-                 encoder_dropout=self.p["encoder_dropout"]).to(self.dev)
+                 encoder_dropout=self.p["encoder_dropout"],
+                 norm_layer=self.p["norm_layer"]).to(self.dev)
         m.load_state_dict(state)
         return m
 

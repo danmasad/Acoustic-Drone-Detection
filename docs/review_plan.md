@@ -244,6 +244,7 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Phase 1 §5–6 filter/window and frame length | done (writing; frame motion measured from test-2 labels) | notes 11, "Two inherited parameters" |
 | README | done | review plan in the document table, new scripts, Track B under "What is left" |
 | Phase 3 protocol flags (B3) | code done, every flag defaults off; the no-data gate passes (run ids, 24 checkpoints, loss, maps, weights, label lag). The epoch-0 check waits on the cache | `src/train.py` `PROTOCOL`, `utils/check_protocol_flags.py [--with-data]` |
+| Phase 3 ablation flags (B5) | code done, default off, checked in the same gate (Dice, GroupNorm, soft target, azimuth roll, identity augmentation, near-field limit, run ids). The runs wait on B4 | `--augment`, `--norm-layer group`, `--target soft`, `--loss dice`, `--nearfield-m`; `src/augment.py` |
 | Seed ensemble (B6) | tooling done, self-test passes; numbers wait on the cache | `python -m src.predict --heatmaps`, `utils/ensemble.py` → `results/ensemble.json` |
 | Checkpoint averaging (B7) | tooling done, self-test passes; needs B4 runs trained with `--save-last` | `python -m src.train --save-last N`, `utils/average_checkpoints.py [--gate]` → `results/checkpoint_averaging.json` |
 | Phase 4 §2 mask-pixel reliability (B8) | tooling done, self-test passes; needs heatmaps | `utils/mask_calibration.py` → `results/calibration_mask.json`, `figures/calibration_mask_test_2.png` |

@@ -55,7 +55,11 @@ class Beamformer:
     def __init__(self, align: dict, channels, freqs: np.ndarray,
                  n_subbands: int = N_SUBBANDS, band=MODEL_BAND,
                  device: torch.device | str = "auto", dirs: np.ndarray | None = None,
-                 grid_shape=GRID_SHAPE):
+                 grid_shape=GRID_SHAPE, focus_m: float = 0.0):
+        """`focus_m` > 0 steers at points that far away along each direction, with spherical
+        wavefronts, instead of at plane waves from infinity. The full array's 1.30 m aperture
+        puts the far-field distance 2 D^2 / lambda at about 22 m at 2.2 kHz, so only the close
+        part of a flight is in the near field, and one focus range is a compromise over it."""
         self.channels = list(channels)
         self.device = pick_device(device) if isinstance(device, str) else device
         self.grid_shape = grid_shape
@@ -65,7 +69,13 @@ class Beamformer:
         self.sel = sel
         pos = mic_positions(align)[self.channels]
         dirs = directions() if dirs is None else dirs
-        tau = dirs @ pos.T / 343.0                                   # (D, M)
+        if focus_m > 0:
+            # Arrival advance at each microphone relative to the origin, which tends to the
+            # plane-wave dirs @ pos as focus_m grows.
+            src = focus_m * dirs[:, None, :]                          # (D, 1, 3)
+            tau = (focus_m - np.linalg.norm(src - pos[None], axis=-1)) / 343.0
+        else:
+            tau = dirs @ pos.T / 343.0                               # (D, M)
         W = np.exp(-2j * np.pi * freqs[sel][:, None, None] * tau[None])
 
         # (F, M, D) so steering is a batched matmul over the frequency axis.
@@ -111,7 +121,8 @@ def get(align: dict, channels, freqs: np.ndarray, key: str = "", **kw) -> Beamfo
     """Memoized Beamformer. `key` should identify the session calibration."""
     ck = (key, tuple(channels), kw.get("n_subbands", N_SUBBANDS),
           kw.get("band", MODEL_BAND), str(kw.get("device", "auto")),
-          _dirs_key(kw.get("dirs"), kw.get("grid_shape", GRID_SHAPE)))
+          _dirs_key(kw.get("dirs"), kw.get("grid_shape", GRID_SHAPE)),
+          float(kw.get("focus_m", 0.0)))
     if ck not in _CACHE:
         _CACHE[ck] = Beamformer(align, channels, freqs, **kw)
     return _CACHE[ck]

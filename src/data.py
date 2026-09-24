@@ -9,6 +9,8 @@ Two constraints shape this module:
   frame, so it is causal by construction, and the first K-1 frames of each segment are
   dropped rather than padded.
 """
+import functools
+
 import numpy as np
 import torch
 
@@ -27,15 +29,19 @@ class SplitData:
 
     def __init__(self, split: str, channels, K: int = 1, band=MODEL_BAND,
                  radius: float = ANGULAR_THRESHOLD, verbose: bool = True, segs=None,
-                 polar: bool = False, label_lag: bool = False):
+                 polar: bool = False, label_lag: bool = False, soft_target: bool = False):
         """`label_lag` moves every label, and therefore every target mask, to the drone's
         position at sound-emission time (`labels.propagation_lagged`). For training targets
-        only: scoring always uses the dataset's own labels, so runs stay comparable."""
+        only: scoring always uses the dataset's own labels, so runs stay comparable.
+        `soft_target` draws the Gaussian target of `labels.target_mask` instead of the disc."""
         from . import polar as polar_grid
 
+        if soft_target and polar:
+            raise ValueError("soft targets exist only on the rectangular grid")
         self.split, self.channels, self.K, self.band = split, list(channels), K, band
         self.polar = polar
-        make_mask = polar_grid.target_mask if polar else target_mask
+        make_mask = (polar_grid.target_mask if polar
+                     else functools.partial(target_mask, soft=soft_target))
         self.segs, self.X, self.masks, self.meta = [], [], [], []
         self.index = []
         for seg in (segments(split) if segs is None else list(segs)):

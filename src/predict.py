@@ -100,12 +100,14 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     cfg = json.loads((RUNS / run_id / "config.json").read_text())
     dev = beamform.pick_device(device or cfg["device"])
     is_polar = bool(cfg.get("polar", False))
+    protocol = cfg.get("protocol", {})
     model = UNet(cfg["K"] * cfg["subbands"], base=cfg.get("base", 32),
-                 depth=cfg.get("depth", 3), wrap=not is_polar).to(dev).eval()
+                 depth=cfg.get("depth", 3), wrap=not is_polar,
+                 norm_layer=protocol.get("norm_layer", "batch")).to(dev).eval()
     model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location=dev))
 
     data = split_data(split, cfg["channels"], cfg["K"], polar=is_polar)
-    frame_norm = cfg.get("protocol", {}).get("input_norm") == "frame"
+    frame_norm = protocol.get("input_norm") == "frame"
     # Runs trained before the native disc existed have no polar_mode, and they were all
     # resampled, so that is the right default.
     native = is_polar and cfg.get("polar_mode", "resample") == "native"
@@ -113,7 +115,8 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     if is_polar:
         proj = polar.NativeDisc(device=dev) if native else polar.Projection(device=dev)
     steer = ({"dirs": proj.steering_dirs, "grid_shape": proj.grid_shape} if native else {})
-    bfs = beamformer_factory(data, cfg["subbands"], dev, **steer)
+    bfs = beamformer_factory(data, cfg["subbands"], dev, **steer,
+                             focus_m=protocol.get("nearfield_m", 0.0))
     dirs = proj.dirs if is_polar else None
     valid = proj.valid if is_polar else None
     rng = np.random.default_rng(seed)

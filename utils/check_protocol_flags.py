@@ -18,6 +18,10 @@ run id. Checked without the dataset:
 5. **Helpers.** `far_weights` is 1 inside 60 m, 1 + w beyond 120 m and 1 on no-drone frames;
    `propagation_lagged` leaves no-drone frames alone and recovers the analytic emission-time
    position of a drone receding at constant speed.
+6. **Ablations.** Dice is Tversky(0.5, 0.5); `norm_layer='group'` builds no BatchNorm; the soft
+   target thresholded at 0.5 is the hard disc; rolling a target by s cells equals the target of
+   a bearing 4s degrees round; augmentation with every knob at zero is the identity; near-field
+   steering at 1000 km is plane-wave steering and at 10 m is not; each flag names its run.
 
 With `--with-data` (needs the STFT cache) it also trains one epoch of `device3` K=1 seed 0 and
 compares epoch 0 with the committed run's history, which is the end-to-end form of the promise.
@@ -40,10 +44,10 @@ import torch
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from src import augment, beamform, models, train              # noqa: E402
 from src import data as data_mod                              # noqa: E402
-from src import models, train                                 # noqa: E402
 from src.config import C, CSV_HZ, RUNS                        # noqa: E402
-from src.labels import propagation_lagged                     # noqa: E402
+from src.labels import propagation_lagged, target_mask        # noqa: E402
 
 BASE = "0f5f66d"          # Dan's tip, the code every committed run was trained with
 EPOCH0_TOLERANCE = 0.01   # hit rate, absolute
@@ -193,6 +197,66 @@ def check_helpers(failures: list) -> None:
         failures.append("propagation_lagged moved the direction of a radial trajectory")
 
 
+def check_ablations(failures: list) -> None:
+    """The Phase 3 ablation flags do what they say, on synthetic inputs."""
+    g = torch.Generator().manual_seed(0)
+    logits, pres = torch.randn(8, 23, 91, generator=g), torch.randn(8, generator=g)
+    mask = (torch.rand(8, 23, 91, generator=g) < 0.02).float()
+    present = (torch.rand(8, generator=g) < 0.8).float()
+    dice = models.Loss("dice")(logits, pres, mask, present)[1]
+    ref = float(models.tversky_loss(logits, mask, alpha=0.5, beta=0.5))
+    if abs(dice - ref) > 1e-6:
+        failures.append(f"dice loss {dice:.6f} vs Tversky(0.5, 0.5) {ref:.6f}")
+
+    gn = models.UNet(16, base=8, depth=2, norm_layer="group")
+    if any(isinstance(m, torch.nn.modules.batchnorm._BatchNorm) for m in gn.modules()):
+        failures.append("norm_layer='group' still built a BatchNorm")
+    out = gn.eval()(torch.randn(1, 16, 23, 91, generator=g))
+    if out[0].shape != (1, 23, 91):
+        failures.append(f"GroupNorm UNet mask shape {tuple(out[0].shape)}")
+
+    rng = np.random.default_rng(0)
+    az, el = rng.uniform(-180, 180, 200), rng.uniform(0, 90, 200)
+    hard = target_mask(az, el, 10.0)
+    soft = target_mask(az, el, 10.0, soft=True)
+    if soft.dtype != np.float32 or not np.array_equal(soft >= 0.5, hard.astype(bool)):
+        failures.append("soft target at 0.5 does not reproduce the hard disc")
+
+    for s in (1, 17, 45):
+        moved = target_mask((az + 4 * s + 180) % 360 - 180, el, 10.0)
+        rolled = augment.roll(torch.from_numpy(hard), s).numpy()
+        if not np.array_equal(rolled, moved):
+            failures.append(f"azimuth roll by {s} cells is not a {4 * s} degree rotation")
+    X = torch.randn(4, 2, 6, 5, dtype=torch.complex64, generator=g)
+    saved = augment.GAIN_DB, augment.DROP_P, augment.NOISE_P
+    augment.GAIN_DB, augment.DROP_P, augment.NOISE_P = 0.0, 0.0, 0.0
+    same = torch.equal(augment.spectra(X, torch.Generator().manual_seed(0)), X)
+    augment.GAIN_DB, augment.DROP_P, augment.NOISE_P = saved
+    if not same:
+        failures.append("augment.spectra with every knob at zero is not the identity")
+
+    align = {"mic_array": {"a_": [0, 120, 240], "a2_": [30, 90, 150, 210, 270, 330],
+                           "h_": [0.1, 0.3, 0.5, 0.7, 0.9, 1.1],
+                           "r_": [0.2, 0.3, 0.4, 0.5, 0.6, 0.65]}}
+    freqs = np.linspace(200, 2200, 21)
+    plane = beamform.Beamformer(align, range(24), freqs, n_subbands=4, device="cpu").W
+    far = beamform.Beamformer(align, range(24), freqs, n_subbands=4, device="cpu",
+                              focus_m=1e6).W
+    near = beamform.Beamformer(align, range(24), freqs, n_subbands=4, device="cpu",
+                               focus_m=10.0).W
+    if float((far * plane.conj()).angle().abs().max()) > 1e-3:
+        failures.append("near-field steering at 1000 km does not reduce to plane waves")
+    if float((near * plane.conj()).angle().abs().max()) < 0.1:
+        failures.append("near-field steering at 10 m is indistinguishable from plane waves")
+
+    ids = {k: train.protocol_suffix(train.protocol_changes({k: v})) for k, v in
+           {"augment": True, "norm_layer": "group", "target": "soft",
+            "nearfield_m": 30.0}.items()}
+    if ids != {"augment": "_aug", "norm_layer": "_gn", "target": "_soft",
+               "nearfield_m": "_nf30"}:
+        failures.append(f"ablation run-id suffixes {ids}")
+
+
 def check_epoch0(failures: list) -> None:
     run = "device3_K1_w32_b16_wce_s0"
     ref = json.loads((RUNS / run / "metrics.json").read_text())["history"][0]
@@ -223,6 +287,7 @@ def main() -> int:
     check_loss(orig_models, failures)
     check_maps(original("data", a.base), failures)
     check_helpers(failures)
+    check_ablations(failures)
     if a.with_data:
         check_epoch0(failures)
     for f in failures:
