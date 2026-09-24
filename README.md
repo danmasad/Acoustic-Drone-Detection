@@ -67,7 +67,8 @@ synchronization) against all 24**, at 1 frame versus 5 frames of context.
 | [docs/report.md](docs/report.md) | **The final report.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, four tables; the only remaining gap is the division-of-work paragraph |
 | [docs/prereg_test1.md](docs/prereg_test1.md) | Eleven numbered predictions with explicit confidences, written before the last round of runs existed, and scored afterwards. Four came back plainly wrong — including both directions of the polar question and the expectation that all 24 would gain from K=9 — which is the point of writing them down |
 | [docs/proposal_uav_acoustic_seld.md](docs/proposal_uav_acoustic_seld.md) | The submitted proposal (PDF built with `utils/build_pdf.sh`) |
-| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 42 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the ablations that returned informative nulls and the one we later withdrew, where history saturates and where its gain lands, how the significance testing was done, and what the sealed split said |
+| [docs/review_plan.md](docs/review_plan.md) | A four-phase review of the pipeline (preprocessing, dataset, training, evaluation): findings, the improvement plan, and a status table of what has been done |
+| [docs/design_notes.md](docs/design_notes.md) | Everything measured, decided, or deliberately deferred. The reference document — 46 sections, including the microphone-subset search, the full experiment grid, the leave-one-scene-out detection result, the ablations that returned informative nulls and the one we later withdrew, where history saturates and where its gain lands, how the significance testing was done, and what the sealed split said |
 
 If you read one thing, read the report. If you read two, add design notes sections 21 and 22:
 what the 18 headline runs say, and why the array our own search called optimal came last.
@@ -122,6 +123,11 @@ minute, no audio and no GPU:
 .venv/bin/python utils/detector_history.py      # the detector at K=1/5/9, AUROC against false alarms
 .venv/bin/python utils/check_vs_paper.py        # our numbers against the reference paper's
 .venv/bin/python utils/plot_report_figures.py   # the report's figure, from results/*.json
+.venv/bin/python utils/confusion.py             # confusion matrices at the 95%-recall threshold
+.venv/bin/python utils/calibration.py           # presence-head reliability diagram
+.venv/bin/python utils/error_structure.py       # direction error by elevation, signed azimuth shape
+.venv/bin/python utils/persistence_detector.py  # direction stability as a detection score
+.venv/bin/python utils/hybrid_decoder.py        # delay-and-sum / U-Net per-frame gate
 ```
 
 `significance.py` is the one to read first if you want to know which of these numbers we are willing
@@ -276,6 +282,7 @@ Localization Dataset (CC BY-SA 4.0, no registration).
 | Statistical significance pass | **done** | Cluster-robust block bootstrap for within-weights claims, Welch and exact permutation across seeds, Holm-Bonferroni over all fourteen. Two survive, both the history intervention; a design effect of 3.5 says frame-level intervals were 3.5× too narrow. Design notes section 40 |
 | Where the history gain lands, by range | **done** | +0.5 pp inside 30 m, +8.7 at 60–90 m, +21.8 at 90–120 m, monotone in depth in the far bin. Temporal integration buying signal-to-noise on faint targets, which is what the order-invariance already implied. Design notes section 41 |
 | Native disc at K=9, the last untested cell | **done**, negative result | The disc's far-field gain does not transfer to the array and depth where history pays: 62.7° of far-bin azimuth error against the rectangle's 56.5°, pooled accuracy unchanged. The two far-field mechanisms attack one failure, so whichever runs first takes what is available. Design notes section 42 |
+| Review pass, no-dataset analyses | **done** | At 95% recall every model fires on 72–96% of empty-sky frames, and the presence probabilities are saturated (Brier worse than a constant). Direction accuracy depends on elevation within every range bin; the far field is lost, not biased. Every headline cell carries a ±5.5 pp interval, so the table separates only `best6`. The U-Net's direction *stability* detects at AUROC 0.81–0.86 on test 2, above its own presence head and steadier across seeds. A delay-and-sum/U-Net gate is a null, but it located a near-field failure unique to `all24`. Design notes sections 43–46 and the section 40 addendum |
 | 6b. Remaining ablations | | Speed head only |
 
 ## What is left
@@ -287,6 +294,18 @@ In the order that matters, matching the `[TO FILL — …]` markers in the repor
 | 1 | **Division of work** paragraph in the report | — | The one remaining `[TO FILL]`, and explicitly required by the course instructions |
 | 2 | Slides, 15 minutes | — | Graded separately |
 | 3 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
+
+The review ([docs/review_plan.md](docs/review_plan.md)) leaves a second track that needs the
+dataset and the cache, in this order:
+
+| # | Task | Cost | Why it matters |
+|---|---|---|---|
+| B1 | Signal checks: spectrogram, inter-recorder lag on test 1, range/azimuth histograms, signed DAS azimuth bias per session | ~1 h, no training | Tells apart the two candidate causes of the `all24` near-field failure (notes 46) and tests the far-field DAS offset (notes 44) |
+| B2 | Hann-window cache, DAS baseline only | ~15 min | Decides the window before any retrain (notes 11, "Two inherited parameters") |
+| B3–B4 | Default-off protocol flags (validation split, schedule, clipping, weight decay, per-frame input norm, label lag), then a new baseline under leave-one-flight-out | ~8 h | Removes selection on test 2 and the never-varied constant learning rate |
+| B5 | Ablations against it: augmentation, GroupNorm, soft target / Dice, near-field steering | ~3 h each | Near-field steering has its expected outcome stated in advance in notes 46 |
+| B6–B8 | Seed ensembling, checkpoint averaging, mask-pixel calibration | ~2 h | Variance reduction; completes the calibration picture |
+| B9 | Test 1, once, only through `docs/prereg_test1.md` | — | Persistence detection (notes 45) is the natural candidate for a registered prediction |
 
 **Test 1 discipline:** it has been sealed since day one and every choice in this repository was
 made on test 2. Run it last, run it once, and report whatever it says.
@@ -316,6 +335,11 @@ utils/history_by_range.py where the temporal-context gain lands, by distance bin
 utils/detector_history.py the detector at K=1/5/9: site AUROC against unseen-ambient false alarms
 utils/demand_trained.py   leave-one-group-out training on DEMAND ambient
 utils/compare_polar.py    the five map cells: rectangle, resampled disc, native disc, ± Tversky
+utils/confusion.py        confusion matrices at 95% recall, presence heads and detector
+utils/calibration.py      presence-head reliability diagram
+utils/error_structure.py  direction error by elevation and the shape of the azimuth error
+utils/persistence_detector.py  direction stability as a parameter-free detection score
+utils/hybrid_decoder.py   per-frame delay-and-sum / U-Net gate on peak contrast
 ```
 
 Long runs go through the launcher, because macOS has no `setsid` and `nohup` alone does not

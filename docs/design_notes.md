@@ -564,6 +564,60 @@ so the reasoning is not lost:
 - Speed / Doppler head: still the cheapest thing to cut if time runs short. Baseline to
   beat is simply differentiating the estimated direction track over time.
 
+### Two inherited parameters, reasoned after the fact (added in review, Sep 2026)
+
+**The band-pass filter and the analysis window.** `src/stft_cache.py` applies a 5th-order
+Butterworth band-pass, 200–8000 Hz, with `filtfilt`, and then takes a plain `rfft` of each
+4800-sample frame — a rectangular window. Both are inherited from the dataset's
+`create_dataset.py`; neither was chosen here. What each actually does:
+
+- The **8 kHz upper edge does nothing.** The cache keeps 200–4000 Hz and the model reads only
+  200–2200 Hz, so no retained bin is within an octave of it.
+- The **200 Hz lower edge is the filter's one live effect**, and it exists because of the window.
+  A rectangular window's sidelobes start at −13 dB and fall only 6 dB per octave, so wind energy
+  below 200 Hz, which is large, would leak into the lowest cached bins. Five poles, applied forward
+  and backward, give about 60 dB of attenuation an octave below the edge, which removes that
+  energy before the FFT can smear it. Zero phase is not what matters for beamforming here — every
+  channel gets the identical filter, so it cancels in the inter-channel phase that delay-and-sum
+  reads — but it costs nothing. Filtering runs in blocks with one frame of context on each side,
+  discarded afterwards, so block edges do not reach the cache.
+- The **rectangular window was never tested.** A Hann window would push the first sidelobe to
+  −31 dB, falling 18 dB per octave, at the price of a main lobe twice as wide (irrelevant: the model
+  averages bins into 125 Hz sub-bands) and of down-weighting each frame's edges, which without
+  overlap discards some signal. Overlap would recover it but breaks the one-frame-per-GPS-row
+  identity below. So the test, review item B2, keeps the frame boundaries, rebuilds the cache with
+  Hann (`--window hann`, a separate `cache_hann/`), and reruns only the delay-and-sum baseline. If
+  nothing moves, the rectangular window stays and this paragraph is its justification; if it
+  improves, the headline cells are retrained and the filter loses its reason to exist. Any change
+  must also be made in `src/esc50.py` and `src/demand.py`, which copy the same filter and window so
+  that mixed spectra match ours. Windowing is linear, so spectral mixing (section 19) stays exact
+  under either window.
+
+**The frame length.** 100 ms (4800 samples at 48 kHz) is fixed by the labels, not by acoustics:
+the GPS log is 10 Hz and row k of it is frame k of the segment, which is the whole alignment
+scheme. Any other length means interpolating the labels. Whether 100 ms is a good length can be
+checked from test 2's own labels, taking the great-circle step of the true direction between
+consecutive drone frames:
+
+| Range | Frames | Median step per frame | 95th percentile | Share > 4° (one azimuth cell) |
+|---|---|---|---|---|
+| 0–15 m | 1937 | 0.08° | 2.10° | 0.1% |
+| 15–30 m | 2073 | 0.25° | 1.14° | 0 |
+| 30–60 m | 3790 | 0.30° | 0.57° | 0 |
+| 60–100 m | 3752 | 0.15° | 0.42° | 0 |
+| 100–200 m | 374 | 0.10° | 0.34° | 0 |
+
+So the drone never crosses a grid cell within one frame, except in rare close passes, and the frame
+is short compared with the motion: a frame two to three times longer would still keep 95% of
+frames under one cell beyond 15 m, and would average away more noise per estimate. That is the
+argument for longer frames, and it is also exactly what stacking K frames does, with the
+difference that the network learns how to weight them rather than averaging blindly — and stacking
+is what paid, in the far field where the signal is weakest (sections 34 and 41). So 100 ms stays,
+for a reason now rather than by inheritance: it matches the label rate, motion does not limit it,
+and the time it leaves on the table is better spent by stacking than by lengthening. The 10 Hz bin
+spacing it gives is finer than the model uses (125 Hz sub-bands); whether the rotor's harmonic comb
+needs that resolution is unmeasured until the spectrogram check (review item B1).
+
 ## 12. Scope cuts already made (keep cut unless time appears)
 
 Dropped from earlier drafts to fit a realistic week: ESC-50 hard-negative injection via
