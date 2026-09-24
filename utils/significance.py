@@ -33,6 +33,10 @@ Which test answers which claim:
   first controls frame difficulty and the second controls initialization, and neither controls
   both at once.
 
+Separately from the tests, every headline cell gets an interval on its hit rate (`cell_ci`), with
+the frame and seed components reported apart and then combined; its gate is that the per-seed
+point estimates reproduce each run's `metrics.json`.
+
 The family of claims is corrected with Holm-Bonferroni, which is uniformly more powerful than
 plain Bonferroni and needs no independence assumption.
 """
@@ -45,7 +49,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import predict                                            # noqa: E402
+from src import metrics, predict                                   # noqa: E402
 from src.config import ANGULAR_THRESHOLD, RESULTS, RUNS            # noqa: E402
 from src.geometry import angular_distance                          # noqa: E402
 
@@ -305,6 +309,51 @@ def seed_mean_frames(template: str, order: str, split: str = "test_2"):
             got[0][2][:n], got[0][3][:n], len(got))
 
 
+HEADLINE = [(subset, K) for subset in ("all24", "device3", "best6") for K in (1, 5, 9)]
+
+
+def headline_hits(run_id: str, split: str = "test_2") -> tuple[np.ndarray, np.ndarray]:
+    """Per-drone-frame hit indicator (0/100) in recording order, grid-snapped as the headline
+    table scores it (notes 42), and the segment of each frame."""
+    d = predict.load(f"{run_id}_{split}_causal")
+    o = time_order(d)
+    m = d["has_drone"][o].astype(bool)
+    err = metrics.angular_errors(d["el_idx"][o][m], d["az_idx"][o][m], d["az"][o][m],
+                                 d["el"][o][m])
+    return (err <= ANGULAR_THRESHOLD).astype(float) * 100, d["seg"][o][m]
+
+
+def cell_ci(subset: str, K: int, split: str = "test_2", tag: str = "wce") -> dict | None:
+    """Interval on one headline cell's hit rate, with its two sources of spread kept apart.
+
+    The frame component is a block bootstrap of the seed-averaged per-frame hit, at every block
+    length in BLOCKS; the seed component is the spread of the three seeds' hit rates, whose
+    standard error enters the combined interval as seed_sd / sqrt(n_seeds). The combined
+    half-width adds the two in quadrature at MAIN_BLOCK, which treats them as independent.
+    """
+    runs = [f"{subset}_K{K}_w32_b16_{tag}_s{s}" for s in SEEDS]
+    runs = [r for r in runs if (predict.PREDS / f"{r}_{split}_causal.npz").exists()]
+    if not runs:
+        return None
+    got = [headline_hits(r, split) for r in runs]
+    n = min(len(h) for h, _ in got)
+    per_seed = [float(h.mean()) for h, _ in got]
+    x, seg = np.mean([h[:n] for h, _ in got], 0), got[0][1][:n]
+    frame = {}
+    for b in BLOCKS:
+        boots = block_bootstrap(x, seg, b)
+        lo, hi = np.percentile(boots, [2.5, 97.5])
+        frame[str(b)] = {"ci95": [float(lo), float(hi)], "se": float(boots.std(ddof=1))}
+    seed_sd = float(np.std(per_seed, ddof=1)) if len(per_seed) > 1 else float("nan")
+    seed_se = seed_sd / np.sqrt(len(per_seed))
+    half = 1.96 * float(np.hypot(frame[str(MAIN_BLOCK)]["se"], seed_se))
+    mean = float(np.mean(per_seed))
+    return {"cell": f"{subset} K={K}", "runs": runs, "n_frames": int(n),
+            "hit_10deg": mean, "per_seed": per_seed, "seed_sd": seed_sd,
+            "frame_ci95_by_block": frame, "combined_ci95": [mean - half, mean + half],
+            "combined_half_width": half, "main_block": MAIN_BLOCK}
+
+
 def hits_from_metrics(subset: str, K: int, tag: str = "wce") -> list[float]:
     out = []
     for s in SEEDS:
@@ -452,7 +501,35 @@ def main() -> int:
     print("  the detector where it was trained and does nothing for it anywhere else.")
 
     print("\n" + "=" * 92)
-    print("6. Holm-Bonferroni over the family")
+    print("6. An interval on every headline cell")
+    print("=" * 92)
+    print("Hit rate within 10 degrees on test 2, grid-snapped as the headline table reports it.")
+    print(f"Frame interval: block bootstrap, {MAIN_BLOCK}-frame blocks, seeds averaged per frame.")
+    print("Combined: frame and seed standard errors in quadrature. Not tests, so not in the family.\n")
+    cells, mismatches = {}, []
+    for subset, K in HEADLINE:
+        c = cell_ci(subset, K)
+        if c is None:
+            continue
+        stored = hits_from_metrics(subset, K)
+        if len(stored) != len(c["per_seed"]) or not np.allclose(stored, c["per_seed"], atol=1e-4):
+            mismatches.append(f"{c['cell']}: {c['per_seed']} vs metrics.json {stored}")
+        f = c["frame_ci95_by_block"]
+        lo, hi = c["combined_ci95"]
+        print(f"  {c['cell']:<14}{c['hit_10deg']:6.1f}%   seeds "
+              + " ".join(f"{v:.1f}" for v in c["per_seed"])
+              + f"   frame CI [{f[str(MAIN_BLOCK)]['ci95'][0]:.1f}, "
+              f"{f[str(MAIN_BLOCK)]['ci95'][1]:.1f}]   combined [{lo:.1f}, {hi:.1f}]"
+              f"  (+/-{c['combined_half_width']:.1f})")
+        cells[c["cell"]] = c
+    results["cell_ci"] = cells
+    for mm in mismatches:
+        print(f"  FAIL {mm}")
+    print("  GATE PASS: every cell's per-seed hit rate reproduces its metrics.json"
+          if not mismatches else "  GATE FAIL")
+
+    print("\n" + "=" * 92)
+    print("7. Holm-Bonferroni over the family")
     print("=" * 92)
     adjusted = holm(family)
     print(f"  {'claim':<52}{'p':>10}{'p Holm':>10}   verdict")
@@ -464,7 +541,7 @@ def main() -> int:
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / "significance.json").write_text(json.dumps(results, indent=2, default=float))
     print(f"\nwrote {RESULTS / 'significance.json'}")
-    return 0
+    return 1 if mismatches else 0
 
 
 if __name__ == "__main__":

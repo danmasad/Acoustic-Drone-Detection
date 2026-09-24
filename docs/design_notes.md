@@ -2053,6 +2053,33 @@ contrast at Holm 0.21 is the most interesting casualty, and the trained K=9-agai
 at 0.28 is the one a reader would most expect to be significant — but the alternative is fourteen
 uncorrected tests and a 51% chance that at least one of them reads significant by luck alone.
 
+**Addendum: an interval on every headline cell.** Section 6 of `utils/significance.py` now puts an
+interval on each cell of the headline table (`cell_ci` in `results/significance.json`), scored
+grid-snapped as the table is, and gated on reproducing every run's `metrics.json` hit rate. The
+frame component is a block bootstrap of the seed-averaged hit indicator; the seed component is the
+seed standard error; the combined interval adds them in quadrature.
+
+| Cell | Within 10° | Combined 95% interval | Frame half-width, 3 / 10 / 30 s blocks | Seed sd |
+|---|---|---|---|---|
+| `all24` K=1 | 70.5% | 64.8–76.1 | 3.3 / 5.4 / 7.5 | 1.5 |
+| `all24` K=5 | 70.1% | 64.6–75.7 | 3.5 / 5.5 / 7.3 | 0.9 |
+| `device3` K=1 | 69.3% | 63.7–74.9 | 3.4 / 5.5 / 7.7 | 0.7 |
+| `device3` K=5 | 71.1% | 65.4–76.8 | 3.3 / 5.3 / 7.2 | 1.8 |
+| `device3` K=9 | 73.2% | 67.8–78.6 | 3.3 / 5.1 / 7.0 | 1.4 |
+| `best6` K=1 | 52.1% | 46.5–57.7 | 3.4 / 5.5 / 7.3 | 0.8 |
+| `best6` K=5 | 52.8% | 46.8–58.7 | 3.6 / 5.7 / 7.3 | 1.2 |
+
+(`all24` K=9 has trained runs but no committed per-frame dump, so it waits for the cache.)
+
+Three readings. The frame term dominates the seed term by three to four times, so more seeds
+would not narrow these intervals; more flights would. The half-width keeps growing with block
+length and has not levelled off at 30 s, so the ±5.5 pp at 10 s blocks is a *floor* on the
+uncertainty, not a generous estimate — test 2 is one afternoon of one flight, and its frames are
+correlated on the scale of whole manoeuvres. And every `all24` and `device3` cell sits inside
+every other's interval: the table separates `best6` from the rest and nothing else. Differences
+between the other cells are claims only through the paired designs above, which cancel the shared
+frame difficulty, never by reading two rows of the table against each other.
+
 ## 41. Where the temporal-context gain lands, by range
 
 Notes 27 established *that* history pays where evidence is weakest, using frame-paired deltas

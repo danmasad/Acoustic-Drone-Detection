@@ -238,3 +238,4 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Phase 4 §1 confusion matrix | done | `utils/confusion.py`, `results/confusion.json`, notes 43 |
 | Phase 4 §2 presence reliability | done (mask pixels need heatmaps: Track B) | `utils/calibration.py`, `figures/calibration_presence_test_2.png`, notes 43 |
 | Phase 4 §3 error structure | done | `utils/error_structure.py`, `results/error_by_elevation.json`, `figures/error_structure_test_2.png`, notes 44 |
+| Phase 4 §4 per-cell intervals | done (`all24` K=9 needs a dump) | `utils/significance.py` section 6, `cell_ci` in `results/significance.json`, notes 40 addendum |
