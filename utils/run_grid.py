@@ -19,9 +19,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import RUNS                                    # noqa: E402
-from src.train import train                                    # noqa: E402
+from src.train import PROTOCOL, run_name, train                # noqa: E402
 
 WIDTH = 32   # notes section 18: 2.3x faster than their 64 and it overfits less
+
+# The review's new baseline (B4). Selection moves off test 2 onto blocks of the training scenes,
+# so test 2 becomes a true test; the optimizer gets a schedule, clipping, decay and encoder
+# dropout; labels move to emission time. Left at their defaults on purpose: `input_norm`
+# (per-frame standardization erases loudness, the presence head's cue) and the far-range and
+# presence weights, which are ablations rather than hygiene. Five final epochs are kept for
+# checkpoint averaging (B7).
+B4 = {"val_split": "blocks", "schedule": "cosine", "clip": 1.0, "weight_decay": 1e-4,
+      "encoder_dropout": 0.1, "label_lag": True, "save_last": 5}
+B4_CELLS = [("device3", 1), ("device3", 9), ("all24", 1)]
+# One flag each on top of B4, at device3 K=9 (the plan's cell). 20 m for the near-field focus
+# is the range of all24's top-contrast decile (notes 46).
+B5 = {"augment": {"augment": True}, "groupnorm": {"norm_layer": "group"},
+      "soft": {"target": "soft"}, "dice": {"loss": "dice"}, "nearfield": {"nearfield_m": 20.0}}
 
 BATTERIES = {
     # Step 5a: the order control needs one K=1 and one K=5 run at identical width and seed.
@@ -104,17 +118,29 @@ BATTERIES = {
     # disc survives here, Tversky on top of it is the natural follow-up.
     "polarnative_k9": [{"subset": "device3", "K": 9, "seed": s, "polar": True, "disc": "native"}
                        for s in (0, 1, 2)],
+
+    # --- the review's Track B (docs/review_plan.md) ---------------------------------------
+    # B4 with test 2 as a true test, then the same recipe leave-one-flight-out: one seed per
+    # fold, because the fold-to-fold spread is the quantity being measured. Scene C holds test
+    # 2's flight, so the A and B folds train on it: a LOFO run is only ever scored on its
+    # held-out scene, never on test 2.
+    "b4": [{"subset": s, "K": K, "seed": seed} | B4
+           for s, K in B4_CELLS for seed in (0, 1, 2)],
+    "b4_lofo": [{"subset": s, "K": K, "seed": 0} | B4 | {"val_split": "lofo", "fold": f}
+                for s, K in B4_CELLS for f in ("A_Nov25", "B_Mar18_f1", "C_Mar18_f2")],
+    "b5": [{"subset": "device3", "K": 9, "seed": seed} | B4 | flag
+           for flag in B5.values() for seed in (0, 1, 2)],
 }
 
 
 def run_id(cfg: dict) -> str:
+    """The id `train` will write, protocol flags included, so resuming finds finished runs."""
     from src.config import N_SUBBANDS
-    polar = ""
-    if cfg.get("polar"):
-        polar = "_polarn" if cfg.get("disc", "resample") == "native" else "_polar"
-    return (f"{cfg['subset']}_K{cfg['K']}_w{cfg.get('base', WIDTH)}"
-            f"_b{cfg.get('subbands', N_SUBBANDS)}_{cfg.get('loss', 'wce')}"
-            + polar + f"_s{cfg.get('seed', 0)}")
+    return run_name(cfg["subset"], cfg["K"], cfg.get("base", WIDTH),
+                    cfg.get("subbands", N_SUBBANDS), cfg.get("loss", "wce"),
+                    bool(cfg.get("polar", False)), cfg.get("disc", "resample"),
+                    cfg.get("seed", 0), cfg.get("tag", ""),
+                    {k: v for k, v in cfg.items() if k in PROTOCOL})
 
 
 def too_late() -> bool:
