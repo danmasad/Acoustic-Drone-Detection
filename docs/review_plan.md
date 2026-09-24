@@ -228,3 +228,11 @@ while Track A runs.** Then, in order:
 **Test 1** stays untouched through all of this. If step 4 produces a cell that beats the new
 baseline by more than seed spread under leave-one-flight-out, register the prediction in
 `docs/prereg_test1.md` with an expected gain ≥ 9 pp and score test 1 once.
+
+---
+
+## Status
+
+| Item | State | Where |
+|---|---|---|
+| Phase 4 §1 confusion matrix | done | `utils/confusion.py`, `results/confusion.json`, notes 43 |

@@ -2160,3 +2160,37 @@ Both are defensible and each table is internally consistent, but the layout comp
 the continuous decode: grid-snapping charges the rectangle for its 4° azimuth spacing and credits
 the disc for its 2.5° rim, which is a difference in rasterization rather than in what the model
 learned. Anyone extending this should keep one decode per table and say which.
+
+## 43. Detection as a confusion matrix: at 95% recall, everything fires on almost everything
+
+Every detection number so far has been an AUROC or a specificity, which answer "how separable" but
+not "what would an operator see". `utils/confusion.py` states it as counts at one operating point:
+the threshold that keeps 95% of drone frames, the recall a warning system would actually be run at.
+It writes `results/confusion.json`.
+
+Map-model presence heads are counted directly from the dumps in `results/preds/`. The per-channel
+detector has no per-frame dump, so its tables are rebuilt from the committed summaries: TP and FN
+follow from the recall, TN and FP from the stored specificity and the split's drone-frame count.
+Test 2, test 1 and fold C (which holds test 2's drone segment) have known counts. Folds A and B do
+not, so theirs is bounded from every best-F1 point that sits at recall 1.0, where precision × n can
+only overestimate the positives; on test 2 that bound is off by 0 to 2 frames. Every table
+reproduces its stored specificity (to one frame, plus that tolerance on A and B), which is the gate.
+
+| At 95% recall | Fires on no-drone frames | Precision |
+|---|---|---|
+| Map models, test 2 (7 cells, 3 seeds each) | 84.4–96.1% | 0.78–0.80 |
+| Map models, test 1 (5 cells) | 72.1–96.4% | 0.72–0.78 |
+| Detector, test 2 (within scene) | 89.1% | 0.79 |
+| Detector, LOSO, four variants (fold mean) | 86.2–93.9% | 0.85 |
+| Detector, test 1 | 94.5% | 0.72 |
+
+**Read as an operator would: at the recall anyone would deploy, no model here rejects more than a
+quarter of empty-sky frames, and most reject under a tenth.** Precision near 0.8 is not evidence of
+skill; it is the drone prior (78% of test-2 frames, 72% of test 1) showing through a detector that
+says "drone" almost always. This is the same failure notes 28–30 and 38 describe with AUROCs, made
+legible: the tables do not change any conclusion, they remove the room to read one charitably.
+
+Two details matter for what comes next. The best cell, `device3` K=9, is also the one with the most
+history (notes 34), so whatever rejection exists comes from time, not timbre; that is the motivation
+for scoring localizer persistence directly (notes 45). And the within-scene detector is no better
+than the map models' presence heads, so a separate detector buys nothing at this operating point.
