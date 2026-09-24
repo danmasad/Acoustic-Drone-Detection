@@ -179,3 +179,23 @@ def segments(split: str | None = None, mined_negatives: bool = True) -> list[Seg
         if pre is not None:
             out.append(Segment(d, pre, align))
     return [s for s in out if split is None or s.split == split]
+
+
+# Scene = one recording session and flight at site 1, by segment id. The unit of
+# leave-one-scene-out for the detector (notes 28) and of leave-one-flight-out for the map model.
+# Scene C holds all of test 2 plus the half of its ambient tail that the dataset calls training.
+SCENES = {
+    "A_Nov25": ["Nov_25_2024_f11_drone", "Nov_25_2024_f11_pre_takeoff"],
+    "B_Mar18_f1": ["Mar_18_2025_f1_drone", "Mar_18_2025_f1_pre_takeoff"],
+    "C_Mar18_f2": ["Mar_18_2025_f2_drone", "Mar_18_2025_f2_no_drone_1",
+                   "Mar_18_2025_f2_no_drone_2", "Mar_18_2025_f2_pre_takeoff"],
+}
+
+
+def scene_segments(names) -> list[Segment]:
+    """The segments of the named scenes, in SCENES order; unknown ids fail loudly."""
+    lookup = {seg.id: seg for split in ("train", "test_2") for seg in segments(split)}
+    missing = [sid for n in names for sid in SCENES[n] if sid not in lookup]
+    if missing:
+        raise KeyError(f"unknown segment ids {missing}")
+    return [lookup[sid] for n in names for sid in SCENES[n]]

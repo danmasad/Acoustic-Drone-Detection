@@ -128,7 +128,7 @@ class UNet(nn.Module):
     """(B, C, 23, 91) maps -> per-pixel logits of the same size, plus one presence logit."""
 
     def __init__(self, in_channels: int, base: int = 64, depth: int = 3,
-                 dropout: float = 0.1, wrap: bool = True):
+                 dropout: float = 0.1, wrap: bool = True, encoder_dropout: float = 0.0):
         super().__init__()
         chans = [base * 2 ** i for i in range(depth)]
         self.down = nn.ModuleList()
@@ -136,6 +136,9 @@ class UNet(nn.Module):
         for ch in chans:
             self.down.append(Block(c, ch, wrap))
             c = ch
+        # Channel dropout after every encoder block. Built only when asked for, so a default
+        # model draws the same random numbers as every run trained before the option existed.
+        self.enc_drop = nn.Dropout2d(encoder_dropout) if encoder_dropout > 0 else None
         self.bottleneck = Block(c, c * 2, wrap)
         self.up = nn.ModuleList()
         c = c * 2
@@ -161,6 +164,8 @@ class UNet(nn.Module):
         skips = []
         for block in self.down:
             x = block(x)
+            if self.enc_drop is not None:
+                x = self.enc_drop(x)
             skips.append(x)
             x = F.max_pool2d(x, 2)
         x = self.bottleneck(x)
@@ -176,14 +181,16 @@ class UNet(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
-def tversky_loss(logits, target, alpha: float = 0.3, beta: float = 0.7, eps: float = 1.0):
+def tversky_loss(logits, target, alpha: float = 0.3, beta: float = 0.7, eps: float = 1.0,
+                 reduce: bool = True):
     """Their loss. Beta > alpha punishes misses harder than false positives, which is what
     a sparse target needs; it is the smooth generalization of the Dice coefficient."""
     p = torch.sigmoid(logits)
     tp = (p * target).sum((-2, -1))
     fp = (p * (1 - target)).sum((-2, -1))
     fn = ((1 - p) * target).sum((-2, -1))
-    return (1 - (tp + eps) / (tp + alpha * fp + beta * fn + eps)).mean()
+    per_example = 1 - (tp + eps) / (tp + alpha * fp + beta * fn + eps)
+    return per_example.mean() if reduce else per_example
 
 
 class Loss(nn.Module):
@@ -206,7 +213,12 @@ class Loss(nn.Module):
         self.register_buffer("ppw", torch.tensor(float(presence_pos_weight)))
         self.presence_weight = presence_weight
 
-    def forward(self, mask_logits, presence_logit, mask, present):
+    def forward(self, mask_logits, presence_logit, mask, present, weight=None):
+        """`weight` is an optional (B,) per-example weight; the loss is then the weighted mean
+        of per-example losses. Without it the code path is the original one, operation for
+        operation, so default runs reproduce bit for bit."""
+        if weight is not None:
+            return self._weighted(mask_logits, presence_logit, mask, present, weight)
         if self.kind == "wce":
             loc = F.binary_cross_entropy_with_logits(mask_logits, mask, pos_weight=self.pw)
         elif self.kind == "tversky":
@@ -214,4 +226,18 @@ class Loss(nn.Module):
         else:
             raise ValueError(f"unknown loss {self.kind}")
         det = F.binary_cross_entropy_with_logits(presence_logit, present, pos_weight=self.ppw)
+        return (loc + self.presence_weight * det, loc.detach().item(), det.detach().item())
+
+    def _weighted(self, mask_logits, presence_logit, mask, present, weight):
+        if self.kind == "wce":
+            loc = F.binary_cross_entropy_with_logits(mask_logits, mask, pos_weight=self.pw,
+                                                     reduction="none").mean((-2, -1))
+        elif self.kind == "tversky":
+            loc = tversky_loss(mask_logits, mask, reduce=False)
+        else:
+            raise ValueError(f"unknown loss {self.kind}")
+        det = F.binary_cross_entropy_with_logits(presence_logit, present, pos_weight=self.ppw,
+                                                 reduction="none")
+        w = weight / weight.sum()
+        loc, det = (w * loc).sum(), (w * det).sum()
         return (loc + self.presence_weight * det, loc.detach().item(), det.detach().item())

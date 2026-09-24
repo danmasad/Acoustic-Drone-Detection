@@ -3,6 +3,25 @@
 Protocol, identical for every condition because that identity is what makes rows
 comparable: model selection on test 2, test 1 sealed, early stopping on test-2 AUPRC with
 patience 10 and a hard cap, best checkpoint restored rather than last.
+
+The review (docs/review_plan.md, Phase 3) found that protocol selects on the split it reports
+and never varies the optimizer. Every change it proposes is a flag in PROTOCOL, and every flag
+defaults to the behaviour above, so each of the 81 existing runs is reproduced from HEAD with its
+original run id. A run with any non-default flag gets them spelled out in its run id and in
+`config.json["protocol"]`:
+
+- `val_split`: `test2` selects on test 2 (the original); `blocks` selects on interleaved 30 s
+  blocks of the training scenes and scores test 2 once, as a true test; `lofo` holds out one
+  site-1 scene (`fold`, from `config.SCENES`), selects on blocks of the other two and scores the
+  held-out scene.
+- `schedule` (`plateau` halves the rate after 3 flat epochs of the monitor, `cosine` anneals over
+  `max_epochs`), `clip` (gradient-norm cap), `weight_decay` (AdamW when non-zero),
+  `encoder_dropout` (channel dropout after each encoder block).
+- `input_norm`: `global` training statistics, or `frame` to standardize every map on its own.
+- `label_lag`: train on labels moved to sound-emission time; scoring keeps the dataset's labels.
+- `far_weight`: per-example loss weight rising linearly from 1 at 60 m to 1 + far_weight at
+  120 m and beyond, for the frames the far-field failure lives in.
+- `presence_weight`: weight of the presence term against the mask term.
 """
 import argparse
 import json
@@ -14,7 +33,7 @@ import torch
 
 from . import beamform, metrics
 from . import polar as polar_grid
-from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, RUNS
+from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, RUNS, SCENES, scene_segments
 from .data import SplitData, input_stats, to_maps
 from .models import Loss, UNet, decode_mask
 
@@ -27,6 +46,99 @@ EARLY = {"patience": 10, "min_delta": 0.001, "min_epochs": 15, "max_epochs": 60}
 # logged every epoch, and the monitor is identical for every condition, which is what
 # comparability requires.
 MONITOR = "hit_10deg"
+
+PROTOCOL = {"val_split": "test2", "fold": None, "schedule": "none", "clip": 0.0,
+            "weight_decay": 0.0, "encoder_dropout": 0.0, "input_norm": "global",
+            "label_lag": False, "far_weight": 0.0, "presence_weight": 1.0}
+VAL_SPLITS = ("test2", "blocks", "lofo")
+SCHEDULES = ("none", "plateau", "cosine")
+PLATEAU = {"factor": 0.5, "patience": 3}
+FAR_RAMP_M = (60.0, 120.0)
+
+
+def protocol_changes(protocol: dict) -> dict:
+    """The flags that differ from the original protocol, in PROTOCOL order."""
+    unknown = set(protocol) - set(PROTOCOL)
+    if unknown:
+        raise ValueError(f"unknown protocol flags {sorted(unknown)}")
+    p = PROTOCOL | protocol
+    if p["val_split"] not in VAL_SPLITS:
+        raise ValueError(f"val_split must be one of {VAL_SPLITS}")
+    if p["schedule"] not in SCHEDULES:
+        raise ValueError(f"schedule must be one of {SCHEDULES}")
+    if p["input_norm"] not in ("global", "frame"):
+        raise ValueError("input_norm must be 'global' or 'frame'")
+    if (p["val_split"] == "lofo") != (p["fold"] is not None):
+        raise ValueError("fold is required with val_split='lofo' and meaningless without it")
+    if p["fold"] is not None and p["fold"] not in SCENES:
+        raise ValueError(f"fold must be one of {list(SCENES)}")
+    return {k: p[k] for k in PROTOCOL if p[k] != PROTOCOL[k]}
+
+
+def protocol_suffix(changes: dict) -> str:
+    """Run-id fragment for the non-default flags; empty for the original protocol."""
+    parts = []
+    for k, v in changes.items():
+        if k == "val_split":
+            parts.append(f"v{v}")
+        elif k == "fold":
+            parts[-1] += v.split("_")[0]
+        elif k == "schedule":
+            parts.append(v)
+        elif k == "input_norm":
+            parts.append(f"{v}norm")
+        elif k == "label_lag":
+            parts.append("lag")
+        else:
+            short = {"clip": "clip", "weight_decay": "wd", "encoder_dropout": "edo",
+                     "far_weight": "far", "presence_weight": "pw"}[k]
+            parts.append(f"{short}{v:g}")
+    return "_" + "-".join(parts) if parts else ""
+
+
+def run_name(subset: str, K: int, base: int, subbands: int, loss: str, polar: bool, disc: str,
+             seed: int, tag: str = "", protocol: dict | None = None) -> str:
+    # `_polarn` rather than `_polar_native`, and only when it differs: the resampled runs are
+    # already on disk under `_polar` and must keep their ids so nothing re-trains.
+    suffix = "" if not polar else ("_polarn" if disc == "native" else "_polar")
+    return (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + suffix
+            + protocol_suffix(protocol_changes(protocol or {}))
+            + f"_s{seed}" + (f"_{tag}" if tag else ""))
+
+
+def far_weights(range_m: np.ndarray, far_weight: float) -> np.ndarray:
+    """Per-example loss weight: 1 inside FAR_RAMP_M[0], rising linearly to 1 + far_weight at
+    FAR_RAMP_M[1] and flat beyond; 1 for no-drone frames, whose range is NaN."""
+    lo, hi = FAR_RAMP_M
+    ramp = np.clip((np.nan_to_num(range_m, nan=0.0) - lo) / (hi - lo), 0.0, 1.0)
+    return (1.0 + far_weight * ramp).astype(np.float32)
+
+
+def protocol_data(channels, K: int, polar: bool, p: dict, verbose: bool = True):
+    """(fit, monitor, tests) for a protocol. `tests` maps a result key to a SplitData that is
+    scored once at the end and never used for selection, except under the original protocol,
+    where test 2 is both, as it always was."""
+    from .detector import split_for_early_stopping
+
+    lag = p["label_lag"]
+    if p["val_split"] == "test2":
+        fit = SplitData("train", channels, K, verbose=verbose, polar=polar, label_lag=lag)
+        monitor = SplitData("test_2", channels, K, verbose=verbose, polar=polar)
+        return fit, monitor, {"test_2": monitor}
+    if p["val_split"] == "blocks":
+        full = SplitData("train", channels, K, verbose=verbose, polar=polar, label_lag=lag)
+        tests = {"test_2": SplitData("test_2", channels, K, verbose=verbose, polar=polar)}
+    else:
+        rest = [n for n in SCENES if n != p["fold"]]
+        full = SplitData(f"scenes {'+'.join(rest)}", channels, K, verbose=verbose,
+                         segs=scene_segments(rest), polar=polar, label_lag=lag)
+        held = f"scene_{p['fold']}"
+        tests = {held: SplitData(held, channels, K, verbose=verbose,
+                                 segs=scene_segments([p["fold"]]), polar=polar)}
+    # The monitor is a view of the training scenes, so under label_lag it is scored against
+    # lagged labels too; only `tests` are guaranteed the dataset's own.
+    fit, monitor = split_for_early_stopping(full)
+    return fit, monitor, tests
 
 
 def git_sha() -> str:
@@ -90,7 +202,7 @@ def reorder(X: torch.Tensor, order: str, rng) -> torch.Tensor:
 
 @torch.no_grad()
 def evaluate(model, data: SplitData, bfs, stats, loss_fn, batch: int = 64,
-             order: str = "causal", seed: int = 0, proj=None) -> dict:
+             order: str = "causal", seed: int = 0, proj=None, frame_norm: bool = False) -> dict:
     model.eval()
     rng = np.random.default_rng(seed)
     cols = {k: [] for k in ("score", "el_idx", "az_idx", "has_drone", "az", "el", "range_m",
@@ -98,7 +210,8 @@ def evaluate(model, data: SplitData, bfs, stats, loss_fn, batch: int = 64,
     losses = []
     for s, X, mask, present, frames in data.batches(batch, shuffle=False):
         bf = bfs(s)
-        x = to_maps(bf, reorder(X, order, rng).to(bf.device), *stats, projection=proj)
+        x = to_maps(bf, reorder(X, order, rng).to(bf.device), *stats, projection=proj,
+                    frame_norm=frame_norm)
         mask, present = mask.to(bf.device), present.to(bf.device)
         mask_logits, presence = model(x)
         total, _, _ = loss_fn(mask_logits, presence, mask, present)
@@ -139,23 +252,26 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
           base: int = 32, depth: int = 3, max_epochs: int = EARLY["max_epochs"],
           patience: int = EARLY["patience"], min_epochs: int = EARLY["min_epochs"],
           device: str = "auto", tag: str = "", polar: bool = False,
-          disc: str = "resample", verbose: bool = True) -> dict:
+          disc: str = "resample", verbose: bool = True, **protocol) -> dict:
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
     if disc not in ("resample", "native"):
         raise ValueError(f"disc must be 'resample' or 'native', not {disc!r}")
-    # `_polarn` rather than `_polar_native`, and only when it differs: the resampled runs are
-    # already on disk under `_polar` and must keep their ids so nothing re-trains.
-    suffix = "" if not polar else ("_polarn" if disc == "native" else "_polar")
-    run_id = (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + suffix
-              + f"_s{seed}" + (f"_{tag}" if tag else ""))
+    changes = protocol_changes(protocol)
+    p = PROTOCOL | changes
+    if p["input_norm"] == "frame" and polar:
+        raise ValueError("input_norm='frame' is untested on the disc, whose dead cells would "
+                         "enter every map's statistics")
+    run_id = run_name(subset, K, base, subbands, loss, polar, disc, seed, tag, changes)
     out = RUNS / run_id
     out.mkdir(parents=True, exist_ok=True)
 
     channels = MIC_SUBSETS[subset]
-    train_data = SplitData("train", channels, K, verbose=verbose, polar=polar)
-    val_data = SplitData("test_2", channels, K, verbose=verbose, polar=polar)
+    # train_data fits, val_data selects the epoch; under the original protocol val_data is
+    # test 2 and is also what gets reported, which is the selection the review flagged.
+    train_data, val_data, tests = protocol_data(channels, K, polar, p, verbose=verbose)
+    frame_norm = p["input_norm"] == "frame"
     dev = beamform.pick_device(device)
     native = polar and disc == "native"
     proj = None
@@ -167,16 +283,26 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     steer = ({"dirs": proj.steering_dirs, "grid_shape": proj.grid_shape} if native else {})
     bfs_train = beamformer_factory(train_data, subbands, dev, **steer)
     bfs_val = beamformer_factory(val_data, subbands, dev, **steer)
+    bfs_tests = {k: bfs_val if d is val_data else beamformer_factory(d, subbands, dev, **steer)
+                 for k, d in tests.items()}
 
-    stats = input_stats(train_data, bfs_train, seed=seed,
-                        valid=proj.valid if native else None)
+    stats = ((0.0, 1.0) if frame_norm else
+             input_stats(train_data, bfs_train, seed=seed, valid=proj.valid if native else None))
     pos_rate = train_data.mask_positive_rate()
     drone_rate = train_data.positive_rate
     # No circular padding on the disc: its horizontal axis is an image coordinate, not an angle.
-    model = UNet(K * subbands, base=base, depth=depth, wrap=not polar).to(dev)
+    model = UNet(K * subbands, base=base, depth=depth, wrap=not polar,
+                 encoder_dropout=p["encoder_dropout"]).to(dev)
     loss_fn = Loss(loss, pos_weight=min(1.0 / max(pos_rate, 1e-6), 100.0),
+                   presence_weight=p["presence_weight"],
                    presence_pos_weight=(1 - drone_rate) / max(drone_rate, 1e-6)).to(dev)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    opt = (torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=p["weight_decay"])
+           if p["weight_decay"] > 0 else torch.optim.Adam(model.parameters(), lr=lr))
+    sched = None
+    if p["schedule"] == "plateau":
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", **PLATEAU)
+    elif p["schedule"] == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max_epochs)
 
     cfg = {"run_id": run_id, "git": git_sha(), "subset": subset, "channels": channels,
            "K": K, "subbands": subbands, "seed": seed, "lr": lr, "loss": loss,
@@ -189,6 +315,10 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
            "train_stacks": len(train_data), "val_stacks": len(val_data),
            "val_positive_rate": val_data.positive_rate, "monitor": MONITOR,
            "n_params": model.n_params, "early_stopping": EARLY | {"patience": patience}}
+    if changes:
+        # Only when something differs, so an original-protocol config is key-for-key the
+        # config every earlier run wrote.
+        cfg["protocol"] = p | {"tests": list(tests)}
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
     if verbose:
         h, w = train_data.masks[0].shape[1:]
@@ -200,20 +330,32 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     for epoch in range(max_epochs):
         model.train()
         t0, tot, n = time.time(), 0.0, 0
-        for s, X, mask, present, _ in train_data.batches(batch, rng=rng):
+        for s, X, mask, present, frames in train_data.batches(batch, rng=rng):
             bf = bfs_train(s)
-            x = to_maps(bf, X.to(bf.device), *stats, projection=proj)
+            x = to_maps(bf, X.to(bf.device), *stats, projection=proj, frame_norm=frame_norm)
             mask_logits, presence = model(x)
+            weight = None
+            if p["far_weight"] > 0:
+                weight = torch.from_numpy(far_weights(train_data.meta[s]["range_m"][frames],
+                                                      p["far_weight"])).to(bf.device)
             total, _, _ = loss_fn(mask_logits, presence, mask.to(bf.device),
-                                  present.to(bf.device))
+                                  present.to(bf.device), weight=weight)
             opt.zero_grad(set_to_none=True)
             total.backward()
+            if p["clip"] > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), p["clip"])
             opt.step()
             tot += float(total.detach()) * len(X)
             n += len(X)
-        m = evaluate(model, val_data, bfs_val, stats, loss_fn, proj=proj)
+        m = evaluate(model, val_data, bfs_val, stats, loss_fn, proj=proj, frame_norm=frame_norm)
         m |= {"epoch": epoch, "train_loss": tot / max(n, 1),
               "seconds": time.time() - t0}
+        if sched is not None:
+            m["lr"] = opt.param_groups[0]["lr"]
+            if p["schedule"] == "plateau":
+                sched.step(m[MONITOR])
+            else:
+                sched.step()
         history.append(m)
         if verbose:
             print(f"  epoch {epoch:>2}  {m['seconds']:>5.0f}s  train {m['train_loss']:.4f}  "
@@ -232,16 +374,22 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     if best_state is not None:
         model.load_state_dict(best_state)
         torch.save(best_state, out / "best.pt")
-    final = evaluate(model, val_data, bfs_val, stats, loss_fn, proj=proj)
-    result = {"config": cfg, "best_epoch": best_epoch, "epochs_run": len(history),
-              "test_2": final, "history": history}
+    ev = {"stats": stats, "loss_fn": loss_fn, "proj": proj, "frame_norm": frame_norm}
+    result = {"config": cfg, "best_epoch": best_epoch, "epochs_run": len(history)}
+    if changes:
+        result["monitor"] = evaluate(model, val_data, bfs_val, **ev)
+    for key, data in tests.items():
+        result[key] = evaluate(model, data, bfs_tests[key], **ev)
+    result["history"] = history
+    primary = next(iter(tests))
+    final = result[primary]
     if K > 1:
-        result["order_control"] = {o: evaluate(model, val_data, bfs_val, stats, loss_fn,
-                                               order=o, seed=seed, proj=proj)
+        result["order_control"] = {o: evaluate(model, tests[primary], bfs_tests[primary],
+                                               order=o, seed=seed, **ev)
                                   for o in ORDERS if o != "causal"}
     (out / "metrics.json").write_text(json.dumps(result, indent=2))
     if verbose:
-        print(metrics.format_summary(f"{run_id} (best epoch {best_epoch})", final))
+        print(metrics.format_summary(f"{run_id} (best epoch {best_epoch}, {primary})", final))
         for o, m in result.get("order_control", {}).items():
             print(metrics.format_summary(f"  test-time {o}", m))
     return result
@@ -269,8 +417,26 @@ if __name__ == "__main__":
     p.add_argument("--disc", default="resample", choices=["resample", "native"],
                    help="with --polar: resample the rectangular map, or steer at the disc's "
                         "own cells and skip the interpolation")
+    g = p.add_argument_group("protocol (defaults reproduce every earlier run; see module doc)")
+    g.add_argument("--val-split", default=PROTOCOL["val_split"], choices=VAL_SPLITS)
+    g.add_argument("--fold", default=PROTOCOL["fold"], choices=list(SCENES),
+                   help="held-out scene, with --val-split lofo")
+    g.add_argument("--schedule", default=PROTOCOL["schedule"], choices=SCHEDULES)
+    g.add_argument("--clip", type=float, default=PROTOCOL["clip"],
+                   help="gradient-norm cap; 0 is off")
+    g.add_argument("--weight-decay", type=float, default=PROTOCOL["weight_decay"],
+                   help="AdamW weight decay; 0 keeps plain Adam")
+    g.add_argument("--encoder-dropout", type=float, default=PROTOCOL["encoder_dropout"])
+    g.add_argument("--input-norm", default=PROTOCOL["input_norm"], choices=["global", "frame"])
+    g.add_argument("--label-lag", action="store_true",
+                   help="train on labels at sound-emission time")
+    g.add_argument("--far-weight", type=float, default=PROTOCOL["far_weight"])
+    g.add_argument("--presence-weight", type=float, default=PROTOCOL["presence_weight"])
     a = p.parse_args()
     train(subset=a.subset, K=a.K, subbands=a.subbands, seed=a.seed, lr=a.lr, loss=a.loss,
           batch=a.batch, base=a.base, depth=a.depth, max_epochs=a.max_epochs,
           patience=a.patience, min_epochs=a.min_epochs, device=a.device, tag=a.tag,
-          polar=a.polar, disc=a.disc)
+          polar=a.polar, disc=a.disc, val_split=a.val_split, fold=a.fold,
+          schedule=a.schedule, clip=a.clip, weight_decay=a.weight_decay,
+          encoder_dropout=a.encoder_dropout, input_norm=a.input_norm, label_lag=a.label_lag,
+          far_weight=a.far_weight, presence_weight=a.presence_weight)

@@ -78,6 +78,43 @@ def frame_labels(seg: Segment, n_frames: int | None = None) -> dict:
             "has_drone": np.ones(n, dtype=np.uint8)}
 
 
+def propagation_lagged(meta: dict, iterations: int = 3) -> dict:
+    """Labels moved to where the drone was when the sound in each frame left it.
+
+    Row k of the GPS log is where the drone *is* at frame k, but the sound heard in frame k was
+    emitted range/c earlier: 0.29 s, about three frames, at 100 m. So each drone frame's label
+    is replaced by the trajectory interpolated at emission time k - r/(c dt), in Cartesian
+    coordinates so azimuth never wraps mid-interpolation. The emission range depends on the
+    emission time, so the delay is iterated to a fixed point; three rounds settle it well below
+    a millisecond at these speeds. Emission times before the segment's first row clamp to it.
+    No-drone frames are returned unchanged.
+    """
+    from .config import C
+
+    out = dict(meta)
+    d = meta["has_drone"].astype(bool)
+    if not d.any():
+        return out
+    az, el, r = (np.radians(meta["az"][d].astype(float)), np.radians(meta["el"][d].astype(float)),
+                 meta["range_m"][d].astype(float))
+    xyz = np.stack([r * np.cos(el) * np.cos(az), r * np.cos(el) * np.sin(az), r * np.sin(el)], 1)
+    k = np.arange(len(r), dtype=float)
+    lag = r / (C / CSV_HZ)
+    for _ in range(iterations):
+        t = np.clip(k - lag, 0.0, None)
+        p = np.stack([np.interp(t, k, xyz[:, i]) for i in range(3)], 1)
+        lag = np.linalg.norm(p, axis=1) / (C / CSV_HZ)
+    rng = np.linalg.norm(p, axis=1)
+    lagged = {"az": np.degrees(np.arctan2(p[:, 1], p[:, 0])),
+              "el": np.degrees(np.arcsin(np.clip(p[:, 2] / np.maximum(rng, 1e-9), -1, 1))),
+              "range_m": rng}
+    for key, v in lagged.items():
+        col = np.array(meta[key], copy=True)
+        col[d] = v.astype(col.dtype)
+        out[key] = col
+    return out
+
+
 def target_mask(az, el, radius_deg: float, chunk: int = 2048) -> np.ndarray:
     """(n, 23, 91) uint8: 1 within radius_deg of the labelled direction.
 

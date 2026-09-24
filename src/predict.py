@@ -25,7 +25,7 @@ import numpy as np
 import torch
 
 from . import baseline, metrics, polar
-from .config import AZ, EL, MIC_SUBSETS, RESULTS, RUNS
+from .config import AZ, EL, MIC_SUBSETS, RESULTS, RUNS, scene_segments
 from .data import SplitData, to_maps
 from .models import UNet, decode_mask
 
@@ -59,6 +59,13 @@ def load(name: str) -> dict:
     return out
 
 
+def split_data(split: str, channels, K: int, polar: bool = False) -> SplitData:
+    """A dataset split, or `scene_<name>` for one site-1 scene of `config.SCENES`, which is
+    what a leave-one-flight-out run reports on."""
+    segs = scene_segments([split[len("scene_"):]]) if split.startswith("scene_") else None
+    return SplitData(split, channels, K, verbose=False, polar=polar, segs=segs)
+
+
 @torch.no_grad()
 def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
                     seed: int = 0, batch: int = 64, device: str | None = None,
@@ -84,7 +91,8 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
                  depth=cfg.get("depth", 3), wrap=not is_polar).to(dev).eval()
     model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location=dev))
 
-    data = SplitData(split, cfg["channels"], cfg["K"], verbose=False, polar=is_polar)
+    data = split_data(split, cfg["channels"], cfg["K"], polar=is_polar)
+    frame_norm = cfg.get("protocol", {}).get("input_norm") == "frame"
     # Runs trained before the native disc existed have no polar_mode, and they were all
     # resampled, so that is the right default.
     native = is_polar and cfg.get("polar_mode", "resample") == "native"
@@ -101,7 +109,7 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     for s, X, _, present, frames in data.batches(batch, shuffle=False):
         bf = bfs(s)
         x = to_maps(bf, reorder(X, order, rng).to(dev), cfg["input_mean"], cfg["input_std"],
-                    projection=proj)
+                    projection=proj, frame_norm=frame_norm)
         mask_logits, presence = model(x)
         k = mask_logits.flatten(1).argmax(1)
         # Both decoders, every time. They disagree by a lot — the centroid is the paper's and

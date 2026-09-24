@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from .config import (ANGULAR_THRESHOLD, GRID_SHAPE, MODEL_BAND, N_SUBBANDS, segments)
-from .labels import target_mask
+from .labels import propagation_lagged, target_mask
 from .stft_cache import load_cache
 
 
@@ -27,7 +27,10 @@ class SplitData:
 
     def __init__(self, split: str, channels, K: int = 1, band=MODEL_BAND,
                  radius: float = ANGULAR_THRESHOLD, verbose: bool = True, segs=None,
-                 polar: bool = False):
+                 polar: bool = False, label_lag: bool = False):
+        """`label_lag` moves every label, and therefore every target mask, to the drone's
+        position at sound-emission time (`labels.propagation_lagged`). For training targets
+        only: scoring always uses the dataset's own labels, so runs stay comparable."""
         from . import polar as polar_grid
 
         self.split, self.channels, self.K, self.band = split, list(channels), K, band
@@ -37,6 +40,8 @@ class SplitData:
         self.index = []
         for seg in (segments(split) if segs is None else list(segs)):
             stft, meta = load_cache(seg)
+            if label_lag:
+                meta = propagation_lagged(meta)
             sel = (meta["freqs"] >= band[0]) & (meta["freqs"] <= band[1])
             X = np.ascontiguousarray(np.asarray(stft)[:, self.channels][:, :, sel])
             self.freqs = meta["freqs"][sel]
@@ -101,17 +106,26 @@ class SplitData:
 
 
 def to_maps(bf, X: torch.Tensor, mean: float = 0.0, std: float = 1.0,
-            projection=None) -> torch.Tensor:
+            projection=None, frame_norm: bool = False) -> torch.Tensor:
     """(B, K, M, F) spectra -> (B, K*S, 23, 91) standardized decibel maps.
 
     With a `projection` (see `src.polar`) the maps come back as (B, K*S, 46, 46) on the disc.
     Standardization happens first so the projection's zero fill for the dead corners is the
     mean of the distribution rather than an arbitrary dark value.
+
+    `frame_norm` standardizes each map on its own (per example and channel, over its cells)
+    instead of with the global training statistics, so a level shift between sites cannot move
+    the input; `mean` and `std` are then ignored. It erases absolute level, which is the
+    presence head's cue, so it is a localization protocol, not a detection one.
     """
     B, K = X.shape[:2]
     maps = bf.maps(X.reshape(B * K, *X.shape[2:]))
     maps = maps.reshape(B, K * bf.n_subbands, *maps.shape[-2:])
-    maps = (maps - mean) / std
+    if frame_norm:
+        mu = maps.mean((-2, -1), keepdim=True)
+        maps = (maps - mu) / maps.std((-2, -1), keepdim=True).clamp_min(1e-6)
+    else:
+        maps = (maps - mean) / std
     return maps if projection is None else projection(maps)
 
 

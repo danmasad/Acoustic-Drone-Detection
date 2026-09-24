@@ -48,17 +48,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import detector                                         # noqa: E402
-from src.config import RESULTS, segments                         # noqa: E402
+from src.config import RESULTS, SCENES, segments                 # noqa: E402
 
-# Scene = one recording session and flight. Segment ids, so a typo fails loudly.
 MONITOR_FRACTION = 0.2       # of the training scenes, used only for early stopping
-
-SCENES = {
-    "A_Nov25": ["Nov_25_2024_f11_drone", "Nov_25_2024_f11_pre_takeoff"],
-    "B_Mar18_f1": ["Mar_18_2025_f1_drone", "Mar_18_2025_f1_pre_takeoff"],
-    "C_Mar18_f2": ["Mar_18_2025_f2_drone", "Mar_18_2025_f2_no_drone_1",
-                   "Mar_18_2025_f2_no_drone_2", "Mar_18_2025_f2_pre_takeoff"],
-}
 
 
 def by_id() -> dict:
