@@ -2211,3 +2211,70 @@ temperature scaling alone would not help: it cannot reorder frames, and the orde
 seed-unstable — test-2 presence AUROC ranges 0.29–0.85 across the three seeds of one cell
 (`device3` K=5), and 0.38–0.82 at `device3` K=1. The fix belongs in training (the held-out validation split and regularization of
 Phase 3), not in post-hoc calibration.
+
+## 44. The shape of the direction error: elevation matters, the far field is lost, not biased
+
+Every direction number so far is a mean or median per range bin. `utils/error_structure.py` asks
+what those averages hide, on test 2, for the two rectangle-vs-disc pairs that have dumps (`all24`
+K=1 and `device3` K=9, three seeds each), with delay-and-sum as the model-free reference. It uses
+the continuous decode, and its gate is that the pooled hit rates and range-bin azimuth errors
+reproduce `results/polar_vs_rect.json` and `results/polar_k9.json` exactly. Output:
+`results/error_by_elevation.json`, `figures/error_structure_test_2.png`.
+
+**Elevation is a first-order factor, and not a proxy for range.** Within 10°, by true elevation:
+
+| Elevation | `all24` K=1 rect | disc | DAS | `device3` K=9 rect | disc | DAS | frames |
+|---|---|---|---|---|---|---|---|
+| 0–15° | 39.3% | 28.8% | 4.6% | 42.8% | 39.5% | 8.4% | 1312 |
+| 15–30° | 66.3% | 58.6% | 11.4% | 69.4% | 69.4% | 17.2% | 3385 |
+| 30–45° | 69.9% | 71.7% | 35.1% | 71.7% | 70.4% | 37.0% | 3686 |
+| 45–60° | 80.0% | 88.2% | 41.4% | 89.1% | 89.4% | 52.8% | 1885 |
+| 60–90° | 91.7% | 98.0% | 82.3% | 95.4% | 97.5% | 86.5% | 1658 |
+
+Low elevation is mostly far away, so the obvious worry is confounding; it does not survive
+splitting by range. Inside 0–50 m alone the rectangle goes from 43% at 0–15° to 92% above 60°
+(`all24`), and inside 50–100 m from 36% to 93%. Part of the high-elevation advantage is geometry,
+not skill — near the zenith every azimuth is within a few degrees of every other on the sphere,
+so a 10° hit is nearly free — but the low-elevation deficit is real: a drone near the horizon is
+where the array's aperture is foreshortened and where ground reflection arrives almost with the
+direct path. The 14% of test-2 drone frames that are below 15° or beyond 100 m hold 30–32% of
+the misses; the remaining misses are spread over the 15–45° band, where most of the frames are.
+
+**The disc is the reverse of what it was built for.** The native disc was motivated by finer
+azimuth sampling at the rim, which is the horizon. At `all24` K=1 it is *worse* there (−10.5 pp at
+0–15°, −7.7 pp at 15–30°) and better high up (+8.2 and +6.3 pp), and the pattern holds inside
+each range bin (0–50 m, 45–60°: 65% → 91%). The pooled means in notes 36 averaged a loss and a
+gain into near zero. At `device3` K=9 the two layouts agree to within 3 pp in every bin with more
+than 200 frames, which is notes 42's "the mechanisms do not compound" seen per elevation. These are
+seed means with seed spread shown in the figure, not clustered tests; the per-cell intervals are
+notes 40's machinery applied in the next step.
+
+**The far field is lost, not biased.** For signed azimuth error, the mean resultant length R is 1
+for a fixed offset and 0 for answers uniform on the circle:
+
+| Signed azimuth error | 0–50 m | 50–100 m | 100–200 m |
+|---|---|---|---|
+| `all24` K=1 rect: R, bias | 0.90, +0.0° | 0.79, +2.5° | 0.45, −55° |
+| `device3` K=9 rect: R, bias | 0.90, −0.7° | 0.75, +0.4° | 0.33, −23° |
+| DAS `all24`: R, bias | 0.56, +10.7° | 0.37, +62° | 0.96, −18° |
+
+Inside 100 m the models have no bias worth correcting. Beyond it R collapses, and the pooled
+"bias" is not one: per seed it is −93°, −38° and −38° at `all24`, and −126°, −2° and −8° at
+`device3` K=9. The scatter shows why. All 374 far frames lie at one true bearing (140–170°, two
+crossings on one heading), and the predictions smear vertically across the whole circle at that
+bearing. Front-back flips are not the story either: 7.9% of far frames land within 30° of the
+mirror direction at `all24`, below the 17% a uniform guess would put there (24% at `device3` K=9,
+modestly above). A seed-dependent smear is what an SNR limit looks like, which is notes 25's reading
+and says a steering or label correction would buy nothing out there.
+
+**Delay-and-sum is the exception, and it is a lead for the signal checks.** Its far-field answers
+are tightly concentrated (R 0.96) about 18° off (11° for `device3`). A model-free method with a
+fixed offset on one heading points at geometry or labels — the array's heading reference, the
+GPS-to-array transform, or a propagation delay — rather than at learning; the signed-bias check of
+Phase 1 (with data) is the test, and it should be run per session before any retraining. Its
+near-field bias (+10.7° with R 0.56) is phantom peaks, which the models were trained to reject.
+
+Two visible structures in the near-field scatter are worth naming for whoever looks next: vertical
+streaks (a fixed true bearing with wandering predictions — the drone hovering while the output
+drifts) and short horizontal runs near a predicted −10° to 0° across many true bearings, which is
+what a fixed-direction interferer or a learned prior toward the training trajectories would draw.
