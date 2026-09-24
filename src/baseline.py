@@ -25,7 +25,7 @@ from .stft_cache import load_cache
 
 @torch.no_grad()
 def run_split(split: str, subset: str = "all24", batch: int = 64,
-              device: str = "auto", verbose: bool = True) -> dict:
+              device: str = "auto", verbose: bool = True, window: str = "rect") -> dict:
     """Brightest-pixel results over every segment of a split, concatenated.
 
     `seg` and `frame` are carried through so callers can put frames back in time order.
@@ -38,7 +38,7 @@ def run_split(split: str, subset: str = "all24", batch: int = 64,
                            "az", "el", "range_m", "has_drone", "seg", "frame")}
     seg_ids = []
     for s, seg in enumerate(segments(split)):
-        stft, meta = load_cache(seg)
+        stft, meta = load_cache(seg, window=window)
         seg_ids.append(seg.id)
         bf = Beamformer(seg.align, channels, meta["freqs"], device=device,
                         n_subbands=1)
@@ -80,17 +80,20 @@ if __name__ == "__main__":
     # has no parameters to overfit, but our choices downstream would be informed by it.
     p.add_argument("--splits", nargs="*", default=["test_2"])
     p.add_argument("--device", default="auto")
+    p.add_argument("--window", default="rect", choices=["rect", "hann"],
+                   help="STFT analysis window; hann reads cache_hann/ and writes baseline_hann.json")
     args = p.parse_args()
 
     all_results = {}
     for subset in args.subsets:
         for split in args.splits:
-            print(f"\n=== {subset} on {split} ===")
-            res = evaluate(split, subset, device=args.device)
+            print(f"\n=== {subset} on {split} ({args.window}) ===")
+            res = evaluate(split, subset, device=args.device, window=args.window)
             for score, m in res.items():
                 print(format_summary(f"{score:<12}", m))
             all_results[f"{subset}/{split}"] = res
 
     RESULTS.mkdir(exist_ok=True)
-    (RESULTS / "baseline.json").write_text(json.dumps(all_results, indent=2))
-    print(f"\nwrote {RESULTS / 'baseline.json'}")
+    out = RESULTS / ("baseline.json" if args.window == "rect" else f"baseline_{args.window}.json")
+    out.write_text(json.dumps(all_results, indent=2))
+    print(f"\nwrote {out}")
