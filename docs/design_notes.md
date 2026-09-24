@@ -2305,3 +2305,58 @@ Two visible structures in the near-field scatter are worth naming for whoever lo
 streaks (a fixed true bearing with wandering predictions — the drone hovering while the output
 drifts) and short horizontal runs near a predicted −10° to 0° across many true bearings, which is
 what a fixed-direction interferer or a learned prior toward the training trajectories would draw.
+
+## 45. Persistence as a detection score: the localizer is a better detector than the detector
+
+Every learned detection score here keys on what a frame sounds like, and notes 28 and 38 showed
+what that buys across scenes: the per-channel detector's leave-one-scene-out fold mean is AUROC
+0.49. A drone has a second property that diffuse ambient does not: it is one point source moving
+smoothly, so a localizer aimed at it returns nearly the same direction frame after frame.
+`utils/persistence_detector.py` scores exactly that — minus the RMS great-circle spread of the
+last n direction estimates, causal, within a segment, for n = 3, 5, 9 — which is the paper's
+binary 3-frame stability rule made continuous (the gate: at n = 3 and 10° it reproduces
+`check_vs_paper.stability_flags` frame for frame). It has no parameters, so nothing in it can be
+fit to a scene. Output: `results/persistence_detector.json`.
+
+AUROC on test 2, drone frames against the no-drone frames; the reference is the model's own
+presence logit (for delay-and-sum, the peak level) on the same frames:
+
+| Localizer | Persistence n=9, pooled | seeds | Reference score | seeds | 0–50 m | 50–100 m | 100–200 m |
+|---|---|---|---|---|---|---|---|
+| U-Net `all24` K=1 | **0.859** | 0.82 / 0.86 / 0.90 | 0.728 | 0.76 / 0.85 / 0.58 | 0.91 | 0.81 | 0.59 |
+| U-Net `device3` K=1 | **0.811** | 0.81 / 0.81 / 0.82 | 0.585 | 0.56 / 0.82 / 0.38 | 0.88 | 0.75 | 0.34 |
+| U-Net `device3` K=9 | **0.826** | 0.84 / 0.83 / 0.81 | 0.790 | 0.83 / 0.83 / 0.71 | 0.87 | 0.80 | 0.55 |
+| U-Net `best6` K=1 | **0.747** | 0.72 / 0.77 / 0.75 | 0.672 | 0.59 / 0.70 / 0.73 | 0.85 | 0.65 | 0.44 |
+| DAS `all24` | 0.543 | — | 0.589 | — | 0.59 | 0.48 | 0.61 |
+| DAS `device3` | 0.550 | — | 0.631 | — | 0.60 | 0.48 | 0.63 |
+
+(Range columns are persistence n=9, drone frames in the bin against all no-drone frames.)
+
+**What it shows.** On the same frames, the stability of the U-Net's answer separates drone from
+empty sky better than the U-Net's own presence head does, in every cell, and it does so
+*reproducibly*: persistence varies by 0.01–0.08 across seeds where the presence logit varies by up
+to 0.44. The presence head is a separate classifier that learned the training ambient (notes 43);
+the mask head had to learn where a drone *is*, and on empty sky it has nothing stable to point at.
+Longer windows help the models (n = 3 → 9 adds 0.00–0.06) and slightly hurt delay-and-sum, whose
+raw peaks are too erratic to average. Delay-and-sum persistence is weak (0.54–0.60), so the gain is
+not free geometry: it is the U-Net's learned rejection of phantoms, read out as stability.
+
+**What it does not show, and the comparison that is fair.** The 0.49 is a cross-scene number, and
+this is not one: the map models were trained with `no_drone_1` from the same session as test 2's
+negatives, so test 2 is within-scene for the negatives. The like-for-like comparison is the
+detector trained on the same split and scored on the same test 2, which reaches 0.66–0.83 over
+K = 1, 5, 9 (notes 39). Persistence from a *single-frame* U-Net (0.81–0.86) sits at or above the
+detector's K=9 seeds (0.73–0.83) without any history in the network. Whether it survives a new scene cannot be answered
+from these dumps, because no map model was trained leave-one-scene-out; test 1, a different day at
+a different site, is exactly that test, and it is sealed. The prediction worth registering, if the
+report wants a detection claim, is that n=9 persistence from the committed `all24` K=1 seeds keeps
+AUROC above 0.75 on test 1 where the presence head does not — to be written in
+`docs/prereg_test1.md` before anything is scored, per the protocol. It is not registered here.
+
+Two limits carry over. Beyond 100 m persistence is at chance or below (0.34–0.63), which is notes
+44's finding again: a localizer that is lost cannot be steady. And no-drone scenes with a *steady*
+point source — a generator, a road at a fixed bearing, a drone idling on the ground before takeoff —
+are exactly what this score would call a drone; `pre_takeoff` is only 494 frames, and delay-and-sum's
+own peak level ranks it *above* flight (AUROC 0.23–0.29 against it), which says that scene is loud and
+localized. At frame level these AUROCs carry the correlation of notes 40, so differences under
+about 0.05 between rows are not claims.
