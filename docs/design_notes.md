@@ -2523,9 +2523,33 @@ delay-and-sum (grid-snapped) +3.8° and +6.6°. Re-measured against the lag-shif
 bias moves by about 0.2°, so it is not the lag in disguise. A heading error of a few degrees at
 most is not a lever against a 10° threshold.
 
-**Still waiting on the cache:** the spectrogram (`--spectrogram`), and the recorder-sync check
-notes 46 asked for (`--recorders`). The latter fits the four recorders' clock offsets from
-GCC-PHAT delays of all 276 microphone pairs, with each frame's direction and three offsets solved
-jointly and no labels involved, against a gate of one sample. On a synthetic recording with
-planted offsets of 3, −2 and 5.5 samples it recovers them within 0.3 samples, including with a
-strongly harmonic source. Its answer decides between the two causes notes 46 left open.
+**Spectrogram.** `figures/spectrogram_test_2.png` is the 200–4000 Hz cache of test 2's drone
+segment, power averaged over the 24 microphones, with range underneath. The harmonics sit in a
+few hundred hertz at the bottom of the band and slide with the flight; most of the cached
+bandwidth is empty of tonal structure. That is the inherited analysis band, not a finding.
+
+**Recorder sync (notes 46's first candidate).** After the dataset's own integer sample
+corrections, GCC-PHAT delays of all 276 pairs, fitted jointly with each frame's direction and
+three recorder offsets, on 300 frames at 40–100 m (plane-wave enough that curvature across the
+1.30 m aperture is under a sample). No labels. Gate: every offset within one sample of recorder 1.
+
+| Flight | Offsets (samples, vs recorder 1) | Pairs kept | Median residual | In gate |
+|---|---|---|---|---|
+| Nov 25 f11 | 0.0, −0.3, +2.2, **+7.7** | 10% | 1.2 | no |
+| Mar 18 f1 | 0.0, −1.7, +1.1, **+6.2** | 10% | 1.2 | no |
+| Mar 18 f2 (test 2) | 0.0, −0.3, +0.2, **+7.5** | 11% | 1.2 | no |
+| Oct 11 f5 (test 1) | 0.0, −1.2, +3.4, **+20.4** | 11% | 1.2 | no |
+
+Recorder 4 is several samples late on every site-1 flight and twenty samples late on test 1.
+Recorders 2 and 3 stay within a few samples of recorder 1. Only about a tenth of the pairs
+survive a 3-sample residual cut: a drone's harmonics produce wrong GCC peaks, which is why the
+self-test (white-ish noise) kept 99%. The pattern is the same on four flights, so it is not a
+one-segment artefact, but the 10% keep-rate means the *size* of the offset is only known to a
+sample or two.
+
+That is notes 46's first candidate, and it is not rejected. A residual cross-recorder offset
+mis-steers only subsets that span recorders, which is exactly `all24`, and it is present after
+the published corrections. It does not yet prove this *is* the close-range `all24` failure —
+the fit used 40–100 m frames, so the offset is a clock, not a near-field leftover of the fitter
+— but it is no longer an open speculation. The spherical-steering ablation (B5, `--nearfield-m`)
+is still the test of the second candidate.

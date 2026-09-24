@@ -338,7 +338,7 @@ def recorder_sync(seg_id: str) -> dict:
     from src.geometry import mic_positions
     from src.stft_cache import load_cache
 
-    seg = next(s for s in segments(SPLIT) if s.id == seg_id)
+    seg = next(s for s in segments() if s.id == seg_id)
     stft, meta = load_cache(seg)
     r = np.asarray(meta["range_m"])
     ok = np.flatnonzero((np.asarray(meta["has_drone"]) == 1) & (r >= 40) & (r <= 100))
@@ -358,16 +358,18 @@ def spectrogram(seg_id: str) -> Path:
     from src.config import segments
     from src.stft_cache import load_cache
 
-    seg = next(s for s in segments(SPLIT) if s.id == seg_id)
+    seg = next(s for s in segments() if s.id == seg_id)
     stft, meta = load_cache(seg)
+    freqs = np.asarray(meta["freqs"])
     p = 10 * np.log10(np.mean(np.abs(np.asarray(stft)) ** 2, axis=1) + 1e-12)   # (T, F)
     t = np.arange(len(p)) / CSV_HZ
     fig, (a0, a1) = plt.subplots(2, 1, figsize=(11, 6), sharex=True,
                                  gridspec_kw={"height_ratios": (3, 1)})
     a0.imshow(p.T, aspect="auto", origin="lower", cmap="magma",
-              extent=(t[0], t[-1], meta["freqs"][0], meta["freqs"][-1]),
+              extent=(float(t[0]), float(t[-1]), float(freqs[0]), float(freqs[-1])),
               vmin=np.percentile(p, 5), vmax=np.percentile(p, 99.5))
     a0.set_ylabel("frequency (Hz)")
+    a0.set_ylim(float(freqs[0]), float(freqs[-1]))
     a0.set_title(f"{seg_id}: power averaged over the 24 microphones")
     a1.plot(t, meta["range_m"][:len(t)], lw=0.8)
     a1.set_ylabel("range (m)")
@@ -491,11 +493,20 @@ def main() -> int:
     seg_id = next(iter(segs.values()))["seg_id"]
     path = RESULTS / "signal_checks.json"
     if a.recorders:
+        from src.config import segments
         report["recorder_sync"] = recorder_sync(seg_id)
+        report["recorder_sync_by_session"] = {}
+        for seg in segments():
+            if seg.has_drone:
+                report["recorder_sync_by_session"][seg.id] = recorder_sync(seg.id)
         rs = report["recorder_sync"]
-        print(f"recorder offsets (samples, vs recorder 1): "
+        print(f"recorder offsets on {seg_id} (samples, vs recorder 1): "
               f"{', '.join(f'{o:+.2f}' for o in rs['offsets_samples'])}; "
-              f"{'within' if rs['in_sync'] else 'OUTSIDE'} the one-sample gate")
+              f"{'within' if rs['in_sync'] else 'OUTSIDE'} the one-sample gate "
+              f"(kept {100 * rs['pairs_kept']:.0f}% of pairs)")
+        for sid, r in report["recorder_sync_by_session"].items():
+            print(f"  {sid}: {[round(o, 2) for o in r['offsets_samples']]}  "
+                  f"{'in' if r['in_sync'] else 'OUT'} sync")
     elif path.exists():
         prev = json.loads(path.read_text()).get("recorder_sync")
         if prev:
