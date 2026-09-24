@@ -43,7 +43,14 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
     The centroid is taken over unit vectors rather than over azimuth degrees, because azimuth
     wraps: the mean of 179 and -179 is 180, not 0.
     """
-    p = torch.sigmoid(logits)
+    return decode_probs(torch.sigmoid(logits), mode, threshold, dirs, valid)
+
+
+def decode_probs(p: torch.Tensor, mode: str = "centroid", threshold: float = 0.5,
+                 dirs: torch.Tensor | None = None,
+                 valid: torch.Tensor | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """`decode_mask` on per-pixel probabilities rather than logits, which is what an ensemble
+    has after averaging its members' sigmoids."""
     B, n_el, n_az = p.shape
     wrap = dirs is None
     if mode == "argmax":

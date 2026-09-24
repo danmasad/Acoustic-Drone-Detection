@@ -25,13 +25,22 @@ import numpy as np
 import torch
 
 from . import baseline, metrics, polar
-from .config import AZ, EL, MIC_SUBSETS, RESULTS, RUNS, scene_segments
+from .config import AZ, CACHE, EL, MIC_SUBSETS, RESULTS, RUNS, scene_segments
 from .data import SplitData, to_maps
 from .models import UNet, decode_mask
 
 # Under results/, not cache/: these are committed outputs, and cache/ is the git-ignored
 # directory of things a clone is expected to rebuild from audio it may not have.
 PREDS = RESULTS / "preds"
+# Full mask logits, one map per frame in dump order: 15291 x 23 x 91 float32 is 128 MB a run
+# on test 2, far too large to commit. float32 rather than float16 because half precision
+# moves near-tied argmax pixels, and the ensemble's gate is that one member reproduces its
+# own dump exactly.
+HEATMAPS = CACHE / "heatmaps"
+
+
+def heatmap_path(name: str):
+    return HEATMAPS / f"{name}.npy"
 
 # Columns every dump carries, whatever produced it, so downstream analysis never branches on
 # provenance. `seg` and `frame` are what make time order and per-scene grouping recoverable.
@@ -69,17 +78,21 @@ def split_data(split: str, channels, K: int, polar: bool = False) -> SplitData:
 @torch.no_grad()
 def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
                     seed: int = 0, batch: int = 64, device: str | None = None,
-                    overwrite: bool = False, verbose: bool = True) -> dict:
+                    overwrite: bool = False, verbose: bool = True,
+                    heatmaps: bool = False) -> dict:
     """Every per-frame output of one trained run, cached.
 
     `order` accepts anything `src.train.reorder` understands, including the `freeze{j}`
     family, so a history-depth sweep is a loop over this function with one set of weights.
+    `heatmaps` also writes the full mask logits to `HEATMAPS`, which is what averaging seeds
+    before decoding (`utils/ensemble.py`) needs; a cached dump without them is recomputed.
     """
     from . import beamform
     from .train import beamformer_factory, reorder
 
     name = f"{run_id}_{split}_{order}"
-    if (PREDS / f"{name}.npz").exists() and not overwrite:
+    if (PREDS / f"{name}.npz").exists() and not overwrite and not (
+            heatmaps and not heatmap_path(name).exists()):
         if verbose:
             print(f"  cached: {name}")
         return load(name)
@@ -106,6 +119,7 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     rng = np.random.default_rng(seed)
     cols = {k: [] for k in COMMON}
     cols["argmax_az"], cols["argmax_el"] = [], []
+    maps = []
     for s, X, _, present, frames in data.batches(batch, shuffle=False):
         bf = bfs(s)
         x = to_maps(bf, reorder(X, order, rng).to(dev), cfg["input_mean"], cfg["input_std"],
@@ -131,8 +145,13 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
             cols[key].append(data.meta[s][key][frames])
         cols["seg"].append(np.full(len(frames), s))
         cols["frame"].append(np.asarray(frames))
+        if heatmaps:
+            maps.append(mask_logits.float().cpu().numpy())
 
     cols = {k: np.concatenate(v) for k, v in cols.items()}
+    if heatmaps:
+        HEATMAPS.mkdir(parents=True, exist_ok=True)
+        np.save(heatmap_path(name), np.concatenate(maps))
     meta = {"kind": "cnn", "run_id": run_id, "split": split, "order": order,
             "K": cfg["K"], "subset": cfg["subset"], "seed": cfg["seed"],
             "subbands": cfg["subbands"], "polar": is_polar,
@@ -211,6 +230,8 @@ if __name__ == "__main__":
                    help="baseline subsets to dump alongside the networks")
     p.add_argument("--device", default=None)
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--heatmaps", action="store_true",
+                   help="also write each run's mask logits to cache/heatmaps/ (128 MB a run)")
     a = p.parse_args()
 
     print(f"baseline dumps on {a.split}")
@@ -223,7 +244,7 @@ if __name__ == "__main__":
     for run_id in runs:
         for order in a.orders:
             pred = cnn_predictions(run_id, a.split, order=order, device=a.device,
-                                   overwrite=a.overwrite)
+                                   overwrite=a.overwrite, heatmaps=a.heatmaps)
             if order == "causal":
                 bad = verify(pred, run_id, a.split, polar=pred["meta"].get("polar", False))
                 if bad:
