@@ -4,7 +4,9 @@
 __pycache__/
 data/
 cache/
+cache_*/
 logs/
+.worktrees/
 
 # Every run's numbers come along: metrics.json holds the final metrics plus the full per-epoch
 # history, so every table in the report can be rebuilt and reviewed without the 24 GB of audio
