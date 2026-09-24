@@ -243,3 +243,7 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Phase 4 §6 hybrid decoder | done: null (oracle ceiling +1.7–2.7 pp); located an `all24`-only near-field failure; B1 lag check and §8 steering tell its two candidate causes apart | `utils/hybrid_decoder.py`, `results/hybrid_decoder.json`, notes 46 |
 | Phase 1 §5–6 filter/window and frame length | done (writing; frame motion measured from test-2 labels) | notes 11, "Two inherited parameters" |
 | README | done | review plan in the document table, new scripts, Track B under "What is left" |
+| Phase 3 protocol flags (B3) | code done, every flag defaults off; the no-data gate passes (run ids, 24 checkpoints, loss, maps, weights, label lag). The epoch-0 check waits on the cache | `src/train.py` `PROTOCOL`, `utils/check_protocol_flags.py [--with-data]` |
+| Seed ensemble (B6) | tooling done, self-test passes; numbers wait on the cache | `python -m src.predict --heatmaps`, `utils/ensemble.py` → `results/ensemble.json` |
+| Checkpoint averaging (B7) | tooling done, self-test passes; needs B4 runs trained with `--save-last` | `python -m src.train --save-last N`, `utils/average_checkpoints.py [--gate]` → `results/checkpoint_averaging.json` |
+| Phase 4 §2 mask-pixel reliability (B8) | tooling done, self-test passes; needs heatmaps | `utils/mask_calibration.py` → `results/calibration_mask.json`, `figures/calibration_mask_test_2.png` |

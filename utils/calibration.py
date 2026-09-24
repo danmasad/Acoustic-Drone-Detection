@@ -10,7 +10,7 @@ into ten equal-width bins, and each bin's mean predicted probability is set agai
 frequency in it. Expected calibration error (ECE, frame-weighted |confidence - frequency|) and
 the Brier score summarize it, alongside the base rate a constant predictor would score.
 
-Mask-pixel calibration needs the heatmaps, which are not dumped; it is Track B (B8).
+Mask-pixel calibration needs the heatmaps, which are not dumped; it is `utils/mask_calibration.py`.
 
 Gate: every cell's bin counts sum to its frame count and every bin's mean confidence lies
 inside the bin.
