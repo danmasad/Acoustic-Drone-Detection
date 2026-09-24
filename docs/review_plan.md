@@ -240,3 +240,4 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Phase 4 §3 error structure | done | `utils/error_structure.py`, `results/error_by_elevation.json`, `figures/error_structure_test_2.png`, notes 44 |
 | Phase 4 §4 per-cell intervals | done (`all24` K=9 needs a dump) | `utils/significance.py` section 6, `cell_ci` in `results/significance.json`, notes 40 addendum |
 | Phase 4 §5 persistence detector | done on test 2; cross-scene test is a test-1 prereg candidate | `utils/persistence_detector.py`, `results/persistence_detector.json`, notes 45 |
+| Phase 4 §6 hybrid decoder | done: null (oracle ceiling +1.7–2.7 pp); located an `all24`-only near-field failure; B1 lag check and §8 steering tell its two candidate causes apart | `utils/hybrid_decoder.py`, `results/hybrid_decoder.json`, notes 46 |

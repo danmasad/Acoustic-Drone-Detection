@@ -2360,3 +2360,60 @@ are exactly what this score would call a drone; `pre_takeoff` is only 494 frames
 own peak level ranks it *above* flight (AUROC 0.23–0.29 against it), which says that scene is loud and
 localized. At frame level these AUROCs carry the correlation of notes 40, so differences under
 about 0.05 between rows are not claims.
+
+## 46. The hybrid decoder: a clean null, and the near-field mechanism it exposed
+
+The idea: delay-and-sum is worse than the U-Net on average (32.6% within 10° on test 2 against
+70.5% at `all24`), but on a frame whose beamformed peak stands far above the map its location is
+physics, and a network trained on two scenes has no business overruling it. So
+`utils/hybrid_decoder.py` takes delay-and-sum's direction when its peak contrast (`contrast_db`)
+exceeds a threshold and the U-Net's otherwise, sweeps the threshold on test 2, and reports both the
+in-sample optimum and a cross-fitted score (threshold chosen on alternate 30 s blocks, scored on the
+others). Grid-snapped, so the U-Net-only end is the headline number; the gate is that both ends of
+the sweep reproduce the stored U-Net and delay-and-sum hit rates. Test 1 is not scored. Output:
+`results/hybrid_decoder.json`.
+
+**Null, and a firm one.** For `all24` K=1, `device3` K=1 and `device3` K=9 the best threshold is
+"never", in sample and cross-fitted alike: delay-and-sum is behind the U-Net in *every* contrast
+decile, by 9 to 71 pp. Even an oracle gate that picks whichever answer is right on each frame lifts
+the three cells only to 72.2%, 71.6% and 75.9% (+1.7, +2.3, +2.7 pp), so no better gating rule is
+waiting to be found either. Delay-and-sum is not a second opinion worth having on these arrays.
+
+**What the contrast deciles show instead is a near-field failure specific to the 24-mic array.**
+Within 10°,
+by delay-and-sum contrast decile (the median range of each decile in brackets):
+
+| Contrast decile | `all24`: DAS / U-Net | `device3` K=1: DAS / U-Net |
+|---|---|---|
+| lowest | 20% / 92% (75 m) | 14% / 65% (61 m) |
+| 5th | 41% / 77% (46 m) | 25% / 60% (55 m) |
+| 8th | 43% / 67% (27 m) | 59% / 78% (27 m) |
+| 9th | 30% / 51% (16 m) | 71% / 80% (19 m) |
+| highest | **11% / 28%** (26 m) | **66% / 85%** (17 m) |
+
+Contrast rises as the drone comes close, which is expected. What is not expected is that on the
+large array the loudest, closest frames are where *both* methods are worst, while on the small
+array they are where both are best. The U-Net inherits whatever it is, because its input *is*
+the delay-and-sum maps.
+
+Aperture alone does not explain it. The obvious suspect is the plane-wave assumption behind every
+steering vector, which holds beyond roughly 2D²/λ — but the apertures are similar, 1.30 m for
+`all24` and 1.09 m for device 3 (notes 2's table), so across the 200–2200 Hz band the model uses
+that boundary is about 22 m against 15 m, and both arrays' top-contrast frames (median 16–26 m and
+17 m) sit near it. Curvature should hurt both, and it hurts one. What does separate them:
+
+- **`all24` is the only subset that spans all four recorders.** A fixed timing offset between
+  recorders mis-steers every frame, but it matters most when the signal is strong and coherent
+  across devices, which is the close, loud frames; a single recorder has one clock and cannot show
+  it. The cross-correlation lag check of Phase 1 (Track B, B1) tests this directly, per recorder
+  pair, with a stated gate of one sample.
+- **Vertical extent**: 1.16 m for `all24` against 0.49 m for device 3 (the flatness table in notes 11),
+  so a curved wavefront from a source overhead at 20 m is mis-modelled over a larger depth.
+  Near-field (spherical) steering at a reference range of about 20 m (Phase 4 §8, Track B) tests
+  this, and it predicts recovery on `all24`'s top decile and no change on device 3.
+
+The two predictions differ, so the two Track B checks can tell them apart, and both should run
+before any near-field ablation is trained. Until then this is a pattern on two arrays and one
+flight with the mechanism open, not a demonstration; the frame-level caveats of notes 40 apply.
+The near-field weakness of notes 25 now has a location — the loudest `all24` frames — if not yet
+a cause.
