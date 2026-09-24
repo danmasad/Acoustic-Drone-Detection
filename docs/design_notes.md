@@ -2185,7 +2185,7 @@ reproduces its stored specificity (to one frame, plus that tolerance on A and B)
 | Detector, test 1 | 94.5% | 0.72 |
 
 **Read as an operator would: at the recall anyone would deploy, no model here rejects more than a
-quarter of empty-sky frames, and most reject under a tenth.** Precision near 0.8 is not evidence of
+quarter of empty-sky frames, and about half reject under a tenth.** Precision near 0.8 is not evidence of
 skill; it is the drone prior (78% of test-2 frames, 72% of test 1) showing through a detector that
 says "drone" almost always. This is the same failure notes 28–30 and 38 describe with AUROCs, made
 legible: the tables do not change any conclusion, they remove the room to read one charitably.
@@ -2194,3 +2194,20 @@ Two details matter for what comes next. The best cell, `device3` K=9, is also th
 history (notes 34), so whatever rejection exists comes from time, not timbre; that is the motivation
 for scoring localizer persistence directly (notes 45). And the within-scene detector is no better
 than the map models' presence heads, so a separate detector buys nothing at this operating point.
+
+**The presence probabilities are not probabilities.** `utils/calibration.py` bins sigmoid(logit)
+for every headline cell on test 2, three seeds pooled (`figures/calibration_presence_test_2.png`,
+`results/calibration_presence.json`). Every cell puts 93–100% of all frames above p = 0.99 and
+99–100% of no-drone frames above p = 0.5; the top bin, which holds nearly everything, is right
+78% of the time, which is the drone rate. ECE is 0.21–0.22 and the Brier score (0.215–0.224) is
+*worse* than always answering the base rate (0.172).
+
+This is not the class weighting. Training runs at a presence pos_weight of 0.157 (86% of training
+frames have a drone), which pushes logits *toward* "no drone". The head saturates the other way
+because it drives training loss to near zero on the two training scenes' ambient and treats any
+unfamiliar ambient as drone — the soundscape memorization of notes 38, visible in the logits. So:
+a 0.5 threshold is meaningless for these models, any reported probability needs the caveat, and
+temperature scaling alone would not help: it cannot reorder frames, and the ordering itself is
+seed-unstable — test-2 presence AUROC ranges 0.29–0.85 across the three seeds of one cell
+(`device3` K=5), and 0.38–0.82 at `device3` K=1. The fix belongs in training (the held-out validation split and regularization of
+Phase 3), not in post-hoc calibration.

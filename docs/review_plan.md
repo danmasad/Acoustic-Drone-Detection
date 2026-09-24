@@ -236,3 +236,4 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Item | State | Where |
 |---|---|---|
 | Phase 4 §1 confusion matrix | done | `utils/confusion.py`, `results/confusion.json`, notes 43 |
+| Phase 4 §2 presence reliability | done (mask pixels need heatmaps: Track B) | `utils/calibration.py`, `figures/calibration_presence_test_2.png`, notes 43 |
