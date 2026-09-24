@@ -16,6 +16,20 @@ BASE="https://rds.westernsydney.edu.au/Centres/ICNS/2026/Jahir_Rodriguez/dataset
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$REPO/utils/dataset_manifest.tsv"
 JOBS=2
+# The host's CDN answers 403 to clients that do not look like a browser navigation; with these
+# headers (copied verbatim from Chrome, Referer set per file to its folder) plain curl is
+# served. No cookies are needed; a shortened Accept header is refused.
+BROWSER=(
+    -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+    -H 'Accept-Language: en-US,en;q=0.9'
+    -H 'Connection: keep-alive'
+    -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-Mode: navigate'
+    -H 'Sec-Fetch-Site: same-origin' -H 'Sec-Fetch-User: ?1'
+    -H 'Upgrade-Insecure-Requests: 1'
+    -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36'
+    -H 'sec-ch-ua: "Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"'
+    -H 'sec-ch-ua-mobile: ?0' -H 'sec-ch-ua-platform: "macOS"'
+)
 
 # --- worker mode: fetch one file ------------------------------------------------
 if [[ "${1:-}" == "--one" ]]; then
@@ -29,7 +43,8 @@ if [[ "${1:-}" == "--one" ]]; then
     printf '[%s] start %6.1f MB   %s\n' "$(date +%H:%M:%S)" \
         "$(echo "$want" | awk '{printf "%.1f", $1/1048576}')" "${dest##*/}"
     curl -sSL -C - --retry 10 --retry-delay 10 --retry-all-errors \
-         --connect-timeout 30 -o "$dest" "$BASE/$url_path"
+         --connect-timeout 30 "${BROWSER[@]}" -H "Referer: $BASE/$(dirname "$url_path")/" \
+         -o "$dest" "$BASE/$url_path"
     rc=$?
     have=$([[ -f "$dest" ]] && stat -f%z "$dest" || echo 0)
     if [[ $rc -eq 0 && "$have" == "$want" ]]; then
