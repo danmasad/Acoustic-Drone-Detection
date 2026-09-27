@@ -2553,3 +2553,68 @@ the published corrections. It does not yet prove this *is* the close-range `all2
 the fit used 40–100 m frames, so the offset is a clock, not a near-field leftover of the fitter
 — but it is no longer an open speculation. The spherical-steering ablation (B5, `--nearfield-m`)
 is still the test of the second candidate.
+
+## 47b. Hann window on test 2
+
+Delay-and-sum on the Hann STFT cache (`cache_hann/`, test 2 only) against live rectangular
+DAS on the same cache. Gate: matching live frame counts (not the older `baseline.json`
+census). A 1 pp rise on both `all24` and `device3`
+was required to switch the cache; Hann was **kept: Hann did not raise hit@10 by 1 pp on both arrays**.
+
+| Subset | Rect hit@10 | Hann hit@10 | Δ |
+|---|---|---|---|
+| all24 | 0.326 | 0.324 | -0.001 |
+| device3 | 0.376 | 0.370 | -0.006 |
+
+`results/window_hann.json`, `results/baseline_hann.json`.
+
+## 48. New baseline under a true test-2 split
+
+The new baseline (B4): block validation on the training scenes so test 2 is a true
+test; cosine schedule, clip 1, AdamW 1e-4, encoder dropout 0.1, emission-time labels.
+Three seeds. Grid-snapped hit@10 on test 2.
+
+| Cell | Hit@10 | Median deg | AUROC | Epochs |
+|---|---|---|---|---|
+| device3 K=1 | 69.1% ± 0.6 | 5.6 | 0.604 | 19 |
+| device3 K=9 | 69.9% ± 0.9 | 5.7 | 0.654 | 19 |
+| all24 K=1 | 66.7% ± 1.4 | 6.3 | 0.650 | 16 |
+
+`results/b4_baseline.json`.
+
+## 48b. Leave-one-flight-out of the B4 recipe
+
+One seed per fold. Each run is scored only on its held-out scene.
+
+| Cell | Fold | Held-out hit@10 |
+|---|---|---|
+| device3 K=1 | A_Nov25 | 24.3% |
+| device3 K=1 | B_Mar18_f1 | 63.6% |
+| device3 K=1 | C_Mar18_f2 | 70.5% |
+| device3 K=9 | A_Nov25 | 28.1% |
+| device3 K=9 | B_Mar18_f1 | 58.6% |
+| device3 K=9 | C_Mar18_f2 | 68.8% |
+| all24 K=1 | A_Nov25 | 26.5% |
+| all24 K=1 | B_Mar18_f1 | 55.3% |
+| all24 K=1 | C_Mar18_f2 | 66.3% |
+
+## 49–52. Ablations on the B4 device3 K=9 cell
+
+One flag at a time, three seeds, test 2 as a true test.
+
+B4 device3 K=9 on test 2: 69.9% ± 0.9.
+
+| Ablation | Hit@10 | vs B4 |
+|---|---|---|
+| augment | 69.4% ± 1.5 | -0.5 pp |
+| groupnorm | 68.2% ± 0.0 | -1.7 pp |
+| soft | 69.5% ± 1.3 | -0.4 pp |
+| dice | 64.8% ± 5.1 | -5.1 pp |
+| nearfield | 70.5% ± 1.5 | +0.6 pp |
+
+No flag beat B4 by more than the ±0.9 pp seed spread. Near-field is the only positive.
+GroupNorm ran one seed (s0 and s1 hit the 60% MPS cap). Heatmaps, seed ensembles, checkpoint
+averaging and mask-pixel calibration did not finish. The prereg rule did not fire; test 1
+stays sealed.
+
+`results/b5_ablations.json`.

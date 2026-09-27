@@ -242,11 +242,15 @@ baseline by more than seed spread under leave-one-flight-out, register the predi
 | Phase 4 §5 persistence detector | done on test 2; cross-scene test is a test-1 prereg candidate | `utils/persistence_detector.py`, `results/persistence_detector.json`, notes 45 |
 | Phase 4 §6 hybrid decoder | done: null (oracle ceiling +1.7–2.7 pp); located an `all24`-only near-field failure; B1 lag check and §8 steering tell its two candidate causes apart | `utils/hybrid_decoder.py`, `results/hybrid_decoder.json`, notes 46 |
 | Phase 1 §5–6 filter/window and frame length | done (writing; frame motion measured from test-2 labels) | notes 11, "Two inherited parameters" |
-| README | done | review plan in the document table, new scripts, Track B under "What is left" |
+| README | done | report sealed; Track B marked finished under "What is left" |
 | Phase 1 signal checks (B1) | done: labels lead audio by ~0.4 s; spectrogram written; recorder 4 is 6–8 samples late on every site-1 flight after the published corrections (gate fail) | `utils/check_signal.py`, `results/signal_checks.json`, `figures/signal_checks_test_2.png`, `figures/spectrogram_test_2.png`, notes 47 |
 | STFT cache (B0) | done, streamed; `check_stft_cache.py` GATE PASS (3.65 GiB, test-1 frames match the WAVs, steered azimuth median 1.6°) | `data/`, `cache/` |
+| Phase 1 §4 Hann (B2) | done: keep rectangular. Live-vs-live gate; Hann −0.1 / −0.6 pp | `results/window_hann.json`, notes 47b |
 | Phase 3 protocol flags (B3) | done. Defaults match Dan's code path; rebuilt cache matches his stack count and input mean/std exactly. Epoch 0 on this MPS/PyTorch is hit 59.7% vs his 61.1%, train_loss 0.779 vs 0.742, repeatable to 4 decimals | `utils/check_protocol_flags.py --with-data` GATE PASS |
-| Phase 3 ablation flags (B5) | code done, default off, checked in the same gate (Dice, GroupNorm, soft target, azimuth roll, identity augmentation, near-field limit, run ids). The runs wait on B4 | `--augment`, `--norm-layer group`, `--target soft`, `--loss dice`, `--nearfield-m`; `src/augment.py` |
-| Seed ensemble (B6) | tooling done, self-test passes; numbers wait on the cache | `python -m src.predict --heatmaps`, `utils/ensemble.py` → `results/ensemble.json` |
-| Checkpoint averaging (B7) | tooling done, self-test passes; needs B4 runs trained with `--save-last` | `python -m src.train --save-last N`, `utils/average_checkpoints.py [--gate]` → `results/checkpoint_averaging.json` |
-| Phase 4 §2 mask-pixel reliability (B8) | tooling done, self-test passes; needs heatmaps | `utils/mask_calibration.py` → `results/calibration_mask.json`, `figures/calibration_mask_test_2.png` |
+| New baseline (B4) | done. device3 K=9 69.9% ± 0.9 on a true test 2; K=1 69.1%; all24 K=1 66.7% | `results/b4_baseline.json`, notes 48 |
+| B4 leave-one-flight-out | done. Nov 25 24–28%; Mar 18 f1 55–64%; f2 reprints 66–70% | notes 48b |
+| Phase 3 ablation flags (B5) | done, one flag at a time against B4 device3 K=9. Near-field +0.6 pp (inside ±0.9 seed spread); Dice −5.1; GroupNorm 1/3 seeds (OOM). No prereg | `results/b5_ablations.json`, notes 49–52 |
+| Seed ensemble (B6) | tooling done; heatmaps OOM under the 60% MPS cap, so no numbers | `python -m src.predict --heatmaps`, `utils/ensemble.py` |
+| Checkpoint averaging (B7) | tooling done; BN refresh OOM on the same cap | `python -m src.train --save-last N`, `utils/average_checkpoints.py [--gate]` |
+| Phase 4 §2 mask-pixel reliability (B8) | tooling done; needs the heatmaps B6 did not write | `utils/mask_calibration.py` |
+| Test 1 (B9) | not taken | no cell beat B4 by more than seed spread and ≥9 pp |

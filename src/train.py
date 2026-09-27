@@ -28,6 +28,7 @@ original run id. A run with any non-default flag gets them spelled out in its ru
 """
 import argparse
 import collections
+import gc
 import json
 import subprocess
 import time
@@ -60,6 +61,33 @@ TARGETS = ("hard", "soft")
 SCHEDULES = ("none", "plateau", "cosine")
 PLATEAU = {"factor": 0.5, "patience": 3}
 FAR_RAMP_M = (60.0, 120.0)
+# K=9 maps are 144x23x91. evaluate() used to run at batch 64, which is what pushed
+# unified memory over 16 GB around epoch 3 and left the process paging at ~10 MB RSS.
+EVAL_BATCH_WIDE = 16
+MPS_MEMORY_FRACTION = 0.60
+
+
+def _reclaim(device) -> None:
+    """Return unused MPS blocks to the OS. Weights and metrics are untouched."""
+    gc.collect()
+    kind = getattr(device, "type", str(device))
+    if kind == "mps" and hasattr(torch, "mps"):
+        torch.mps.empty_cache()
+    elif kind == "cuda":
+        torch.cuda.empty_cache()
+
+
+def _cap_mps(device, fraction: float = MPS_MEMORY_FRACTION) -> None:
+    """Stop the MPS allocator eating all 16 GB so macOS does not swap the trainer."""
+    if getattr(device, "type", None) != "mps":
+        return
+    fn = getattr(torch.mps, "set_per_process_memory_fraction", None)
+    if fn is None:
+        return
+    try:
+        fn(fraction)
+    except Exception:
+        pass
 
 
 def protocol_changes(protocol: dict) -> dict:
@@ -300,6 +328,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     train_data, val_data, tests = protocol_data(channels, K, polar, p, verbose=verbose)
     frame_norm = p["input_norm"] == "frame"
     dev = beamform.pick_device(device)
+    _cap_mps(dev)
+    eval_batch = EVAL_BATCH_WIDE if K >= 5 else 64
     native = polar and disc == "native"
     proj = None
     if polar:
@@ -383,7 +413,9 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
             opt.step()
             tot += float(total.detach()) * len(X)
             n += len(X)
-        m = evaluate(model, val_data, bfs_val, stats, loss_fn, proj=proj, frame_norm=frame_norm)
+        m = evaluate(model, val_data, bfs_val, stats, loss_fn, batch=eval_batch,
+                     proj=proj, frame_norm=frame_norm)
+        _reclaim(dev)
         m |= {"epoch": epoch, "train_loss": tot / max(n, 1),
               "seconds": time.time() - t0}
         if sched is not None:
@@ -413,7 +445,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     if best_state is not None:
         model.load_state_dict(best_state)
         torch.save(best_state, out / "best.pt")
-    ev = {"stats": stats, "loss_fn": loss_fn, "proj": proj, "frame_norm": frame_norm}
+    ev = {"stats": stats, "loss_fn": loss_fn, "proj": proj, "frame_norm": frame_norm,
+          "batch": eval_batch}
     result = {"config": cfg, "best_epoch": best_epoch, "epochs_run": len(history)}
     if last is not None:
         (out / "last").mkdir(exist_ok=True)

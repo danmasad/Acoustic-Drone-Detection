@@ -92,10 +92,10 @@ def mean_sd(vals):
 
 def do_hann() -> None:
     wait_until("Hann test-2 cache", hann_ready)
-    if (RESULTS / "window_hann.json").exists():
+    if not (RESULTS / "window_hann.json").exists():
+        sh([PY, str(REPO / "utils" / "compare_window.py"), "--device", "cpu"])
+    else:
         print("Hann comparison already written")
-        return
-    sh([PY, str(REPO / "utils" / "compare_window.py"), "--device", "cpu"])
     r = json.loads((RESULTS / "window_hann.json").read_text())
     rows = "\n".join(
         f"| {s} | {c['rect']['hit_10deg']:.3f} | {c['hann']['hit_10deg']:.3f} | "
@@ -106,8 +106,9 @@ def do_hann() -> None:
                 "kept: Hann did not raise hit@10 by 1 pp on both arrays")
     append_notes(
         "## 47b. Hann window on test 2",
-        "Delay-and-sum on the Hann STFT cache (`cache_hann/`, test 2 only) against the committed\n"
-        "rectangular baseline. Gate: same frame counts. A 1 pp rise on both `all24` and `device3`\n"
+        "Delay-and-sum on the Hann STFT cache (`cache_hann/`, test 2 only) against live rectangular\n"
+        "DAS on the same cache. Gate: matching live frame counts (not the older `baseline.json`\n"
+        "census). A 1 pp rise on both `all24` and `device3`\n"
         f"was required to switch the cache; Hann was **{decision}**.\n\n"
         f"| Subset | Rect hit@10 | Hann hit@10 | Δ |\n|---|---|---|---|\n{rows}\n\n"
         "`results/window_hann.json`, `results/baseline_hann.json`.")
@@ -243,7 +244,9 @@ def patch_plan(row: str) -> None:
 
 def main() -> int:
     os.chdir(REPO)
-    print("continue_track_b: Hann -> B4 notes -> LOFO -> B5 -> extras", flush=True)
+    print("continue_track_b: wait for B4 (GPU), then Hann DAS on CPU, LOFO, B5, extras",
+          flush=True)
+    wait_until("B4 battery", lambda: battery_finished("b4.log"))
     do_hann()
     do_b4_notes()
     run_battery("b4_lofo", "b4_lofo.log")

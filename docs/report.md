@@ -1,7 +1,7 @@
 ---
 title: "Hearing Drones in 3D: Convolutional Detection and Direction-Finding from a Reduced Microphone Array"
 author: "Shai Livshits, Dan Masad"
-date: ""
+date: "28 September 2026"
 geometry: margin=0.65in
 fontsize: 10pt
 colorlinks: true
@@ -370,9 +370,13 @@ section 5.4 again on new ground, above chance and worth nothing.
 
 ## 8. Contributions and reproduction
 
-**[TO FILL: division of work]**, as the course instructions require. Every table regenerates from
-committed code behind a `GATE PASS`/`GATE FAIL` script; `README.md` has the commands and
-`docs/design_notes.md` the full record.
+**Dan Masad** framed the cheap-array question, wrote the pipeline the tables run on (dataset,
+cache, DAS, U-Net, detector, metrics), ran every experiment those tables quote — including the
+one sealed test-1 score — and wrote sections 1–7. **Shai Livshits** wrote the four-phase review
+and notes 43–52: the no-retrain error analyses, then a new baseline under a true test-2 split
+and leave-one-flight-out. No ablation beat that baseline by more than seed spread, so test 1
+was not scored again. Every table regenerates from committed code behind a `GATE PASS` /
+`GATE FAIL` script; `README.md` has the commands and `docs/design_notes.md` the full record.
 
 ## 9. References
 

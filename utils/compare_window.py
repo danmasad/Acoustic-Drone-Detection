@@ -6,7 +6,9 @@ Scored on test 2 only, same subsets as `results/baseline.json`. Hann is adopted 
 `peak_db` hit@10 rises by at least 1 pp on both `all24` and `device3`; one subset is not
 enough, because the window is a global cache choice.
 
-Gate: Hann and rect have the same frame counts.
+Gate: live Hann and live rect, scored on the same current cache, have the same
+frame counts. The committed `baseline.json` is the published headline only; it is
+not the census. That file can predate extra no-drone segments in test 2.
 
 Run: .venv/bin/python utils/compare_window.py [--device cpu]
 """
@@ -41,27 +43,34 @@ def main() -> int:
         print("GATE FAIL: Hann cache missing for " + ", ".join(missing))
         return 1
 
-    rect = json.loads((RESULTS / "baseline.json").read_text())
-    hann_all, failures, better = {}, [], []
+    stored = json.loads((RESULTS / "baseline.json").read_text())
+    rect_all, hann_all, failures, better = {}, {}, [], []
     print(f"{'subset':<10} {'rect hit@10':>12} {'hann hit@10':>12} {'delta':>8}")
     for subset in SUBSETS:
-        stored = rect[f"{subset}/{SPLIT}"]["peak_db"]
+        print(f"  running DAS {subset} on rect...", flush=True)
+        rect_all[f"{subset}/{SPLIT}"] = baseline.evaluate(
+            SPLIT, subset, device=a.device, window="rect", verbose=False)
         print(f"  running DAS {subset} on Hann...", flush=True)
         hann_all[f"{subset}/{SPLIT}"] = baseline.evaluate(
             SPLIT, subset, device=a.device, window="hann", verbose=False)
+        r = rect_all[f"{subset}/{SPLIT}"]["peak_db"]
         h = hann_all[f"{subset}/{SPLIT}"]["peak_db"]
-        if h["n_frames"] != stored["n_frames"] or h["n_drone"] != stored["n_drone"]:
-            failures.append(f"{subset}: {h['n_frames']}/{h['n_drone']} vs "
-                            f"{stored['n_frames']}/{stored['n_drone']}")
-        delta = h["hit_10deg"] - stored["hit_10deg"]
+        if h["n_frames"] != r["n_frames"] or h["n_drone"] != r["n_drone"]:
+            failures.append(f"{subset}: hann {h['n_frames']}/{h['n_drone']} vs "
+                            f"rect {r['n_frames']}/{r['n_drone']}")
+        old = stored[f"{subset}/{SPLIT}"]["peak_db"]
+        if old["n_frames"] != r["n_frames"]:
+            print(f"  note: baseline.json has {old['n_frames']} frames; "
+                  f"live rect has {r['n_frames']} (n_drone {r['n_drone']})")
+        delta = h["hit_10deg"] - r["hit_10deg"]
         better.append(delta >= ADOPT_PP)
-        print(f"{subset:<10} {stored['hit_10deg']:12.4f} {h['hit_10deg']:12.4f} {delta:+8.4f}")
+        print(f"{subset:<10} {r['hit_10deg']:12.4f} {h['hit_10deg']:12.4f} {delta:+8.4f}")
 
     report = {"split": SPLIT, "adopt": bool(all(better)), "cells": {
-        s: {"rect": {k: rect[f"{s}/{SPLIT}"]["peak_db"][k] for k in KEYS},
+        s: {"rect": {k: rect_all[f"{s}/{SPLIT}"]["peak_db"][k] for k in KEYS},
             "hann": {k: hann_all[f"{s}/{SPLIT}"]["peak_db"][k] for k in KEYS},
             "delta_hit_10deg": float(hann_all[f"{s}/{SPLIT}"]["peak_db"]["hit_10deg"]
-                                     - rect[f"{s}/{SPLIT}"]["peak_db"]["hit_10deg"])}
+                                     - rect_all[f"{s}/{SPLIT}"]["peak_db"]["hit_10deg"])}
         for s in SUBSETS}}
     RESULTS.mkdir(exist_ok=True)
     (RESULTS / "baseline_hann.json").write_text(json.dumps(hann_all, indent=2) + "\n")

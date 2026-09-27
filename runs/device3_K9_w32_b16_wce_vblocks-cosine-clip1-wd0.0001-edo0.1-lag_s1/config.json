@@ -1,0 +1,64 @@
+{
+  "run_id": "device3_K9_w32_b16_wce_vblocks-cosine-clip1-wd0.0001-edo0.1-lag_s1",
+  "git": "93969ed",
+  "subset": "device3",
+  "channels": [
+    12,
+    13,
+    14,
+    15,
+    16,
+    17
+  ],
+  "K": 9,
+  "subbands": 16,
+  "seed": 1,
+  "lr": 0.005,
+  "loss": "wce",
+  "polar": false,
+  "polar_mode": null,
+  "grid_shape": [
+    23,
+    91
+  ],
+  "batch": 32,
+  "base": 32,
+  "depth": 3,
+  "device": "mps",
+  "input_mean": 136.9290008544922,
+  "input_std": 6.421494960784912,
+  "mask_positive_rate": 0.013942783699931651,
+  "pos_weight": 71.72168731689453,
+  "train_drone_rate": 0.8640628892518061,
+  "presence_pos_weight": 0.15732316672801971,
+  "train_stacks": 28890,
+  "val_stacks": 7197,
+  "val_positive_rate": 0.8640628892518061,
+  "monitor": "hit_10deg",
+  "n_params": 2054690,
+  "early_stopping": {
+    "patience": 10,
+    "min_delta": 0.001,
+    "min_epochs": 15,
+    "max_epochs": 60
+  },
+  "protocol": {
+    "val_split": "blocks",
+    "fold": null,
+    "schedule": "cosine",
+    "clip": 1.0,
+    "weight_decay": 0.0001,
+    "encoder_dropout": 0.1,
+    "input_norm": "global",
+    "label_lag": true,
+    "far_weight": 0.0,
+    "presence_weight": 1.0,
+    "augment": false,
+    "norm_layer": "batch",
+    "target": "hard",
+    "nearfield_m": 0.0,
+    "tests": [
+      "test_2"
+    ]
+  }
+}
