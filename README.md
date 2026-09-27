@@ -64,7 +64,7 @@ synchronization) against all 24**, at 1 frame versus 5 frames of context.
 
 | File | What it is |
 |---|---|
-| [docs/report.md](docs/report.md) | **The final report.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, four tables; the only remaining gap is the division-of-work paragraph |
+| [docs/report.md](docs/report.md) | **The final report, sealed.** Every number in it is measured, including the sealed split. Five pages of the five allowed, one four-panel figure, four tables. Section 8 has the division of work |
 | [docs/prereg_test1.md](docs/prereg_test1.md) | Eleven numbered predictions with explicit confidences, written before the last round of runs existed, and scored afterwards. Four came back plainly wrong — including both directions of the polar question and the expectation that all 24 would gain from K=9 — which is the point of writing them down |
 | [docs/proposal_uav_acoustic_seld.md](docs/proposal_uav_acoustic_seld.md) | The submitted proposal (PDF built with `utils/build_pdf.sh`) |
 | [docs/review_plan.md](docs/review_plan.md) | A four-phase review of the pipeline (preprocessing, dataset, training, evaluation): findings, the improvement plan, and a status table of what has been done |
@@ -287,13 +287,12 @@ Localization Dataset (CC BY-SA 4.0, no registration).
 
 ## What is left
 
-In the order that matters, matching the `[TO FILL — …]` markers in the report:
+The report is sealed. Remaining course work, then the review track that needs the dataset:
 
 | # | Task | Cost | Why it matters |
 |---|---|---|---|
-| 1 | **Division of work** paragraph in the report | — | The one remaining `[TO FILL]`, and explicitly required by the course instructions |
-| 2 | Slides, 15 minutes | — | Graded separately |
-| 3 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
+| 1 | Slides, 15 minutes | — | Graded separately |
+| 2 | Optional: the speed head from the unused GPS velocity labels | ~1 h | Depth, not a gap. Everything the report claims is measured without it |
 
 The review ([docs/review_plan.md](docs/review_plan.md)) leaves a second track that needs the
 dataset and the cache, in this order:
