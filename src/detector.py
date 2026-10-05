@@ -25,7 +25,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from . import metrics
-from .config import CACHE_BAND, MIC_SUBSETS, RUNS
+from .config import CACHE_BAND, MIC_SUBSETS, run_dir
 from .data import SplitData
 from .esc50 import HARD_CLASSES
 
@@ -237,11 +237,11 @@ def load_run(run_id: str, device: str = "auto"):
     """A finished detector, ready to score anything: (model, config, stats, bank, device)."""
     from .beamform import pick_device
 
-    saved = json.loads((RUNS / run_id / "metrics.json").read_text())
+    saved = json.loads((run_dir(run_id) / "metrics.json").read_text())
     cfg = saved["config"]
     dev = pick_device(device)
     model = SpectralDetector(cfg["K"], cfg["width"]).to(dev).eval()
-    model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location=dev))
+    model.load_state_dict(torch.load(run_dir(run_id) / "best.pt", map_location=dev))
     bank = None
     if cfg.get("log_bins"):
         freqs = np.fft.rfftfreq(4800, 1 / 48000)
@@ -254,7 +254,7 @@ def ambient_reference_energy(data: SplitData) -> float:
     """Median in-band energy of one channel-frame of our own *training* no-drone audio.
 
     This is the level DEMAND scenes get matched to before they are used as training negatives.
-    It has to come from the training split: `utils/demand_false_alarms.py` takes the same
+    It has to come from the training split: `utils/analysis/demand_false_alarms.py` takes the same
     statistic from test 2, which is right for an evaluation that must be in the units the
     reported threshold lives in, and would be a leak here.
 
@@ -319,7 +319,7 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
               + (f"_log{log_bins}" if log_bins else "")
               + ("_amb" if ambient_groups else "") + f"_s{seed}"
               + (f"_{tag}" if tag else ""))
-    out = RUNS / run_id
+    out = run_dir(run_id)
     out.mkdir(parents=True, exist_ok=True)
 
     channels = MIC_SUBSETS["all24"]

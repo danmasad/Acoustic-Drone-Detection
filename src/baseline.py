@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 from .beamform import Beamformer
-from .config import MIC_SUBSETS, RESULTS, segments
+from .config import MIC_SUBSETS, table_file, segments
 from .metrics import format_summary, summarize
 from .stft_cache import load_cache
 
@@ -91,6 +91,7 @@ if __name__ == "__main__":
                 print(format_summary(f"{score:<12}", m))
             all_results[f"{subset}/{split}"] = res
 
-    RESULTS.mkdir(exist_ok=True)
-    (RESULTS / "baseline.json").write_text(json.dumps(all_results, indent=2))
-    print(f"\nwrote {RESULTS / 'baseline.json'}")
+    path = table_file("baseline.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(all_results, indent=2))
+    print(f"\nwrote {path}")

@@ -77,7 +77,7 @@ def sampling_grid(n: int = N) -> torch.Tensor:
     far ones. It does not handle the near ones: a cell at radius 1.02 sits four tenths of a cell
     past the horizon row, and bilinear interpolation there returns most of that row's value
     rather than zero. The validity mask in `Projection` is what actually clears them, and the
-    gate in `utils/check_polar.py` exists because this was wrong the first time.
+    gate in `utils/validate/check_polar.py` exists because this was wrong the first time.
     """
     az, el, _ = cell_angles(n)
     x = (az - AZ[0]) / (AZ[-1] - AZ[0]) * 2.0 - 1.0

@@ -14,7 +14,7 @@ import torch
 
 from . import beamform, metrics
 from . import polar as polar_grid
-from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, RUNS
+from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, run_dir
 from .data import SplitData, input_stats, to_maps
 from .models import Loss, UNet, decode_mask
 
@@ -150,7 +150,7 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     suffix = "" if not polar else ("_polarn" if disc == "native" else "_polar")
     run_id = (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + suffix
               + f"_s{seed}" + (f"_{tag}" if tag else ""))
-    out = RUNS / run_id
+    out = run_dir(run_id)
     out.mkdir(parents=True, exist_ok=True)
 
     channels = MIC_SUBSETS[subset]

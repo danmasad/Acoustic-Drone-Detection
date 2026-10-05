@@ -14,7 +14,7 @@ So this module runs a checkpoint once and writes every per-frame quantity to
 and they are committed, which is what makes every analysis script a pure function of files in
 the repository rather than of 4 GB of cache and a GPU.
 
-`cnn_predictions` was lifted out of `utils/check_vs_paper.py`, which now imports it, so there
+`cnn_predictions` was lifted out of `utils/analysis/check_vs_paper.py`, which now imports it, so there
 is one implementation of "run the model and decode a direction" rather than two that can
 drift apart.
 """
@@ -25,13 +25,9 @@ import numpy as np
 import torch
 
 from . import baseline, metrics, polar
-from .config import AZ, EL, MIC_SUBSETS, RESULTS, RUNS
+from .config import AZ, EL, MIC_SUBSETS, pred_file, run_dir
 from .data import SplitData, to_maps
 from .models import UNet, decode_mask
-
-# Under results/, not cache/: these are committed outputs, and cache/ is the git-ignored
-# directory of things a clone is expected to rebuild from audio it may not have.
-PREDS = RESULTS / "preds"
 
 # Columns every dump carries, whatever produced it, so downstream analysis never branches on
 # provenance. `seg` and `frame` are what make time order and per-scene grouping recoverable.
@@ -40,11 +36,12 @@ COMMON = ("score", "el_idx", "az_idx", "pred_az", "pred_el", "has_drone", "az", 
 
 
 def _save(name: str, cols: dict, seg_ids: list[str], meta: dict) -> dict:
-    PREDS.mkdir(parents=True, exist_ok=True)
+    path = pred_file(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
     out = {k: np.asarray(v) for k, v in cols.items()}
     # Compressed because these are committed and most columns are grid indices and repeated
     # labels: 1.17 MB becomes 0.34 MB, and np.load reads either form without being told which.
-    np.savez_compressed(PREDS / f"{name}.npz", seg_ids=np.array(seg_ids),
+    np.savez_compressed(path, seg_ids=np.array(seg_ids),
                         meta=json.dumps(meta), **out)
     out["seg_ids"] = np.array(seg_ids)
     out["meta"] = meta
@@ -53,7 +50,7 @@ def _save(name: str, cols: dict, seg_ids: list[str], meta: dict) -> dict:
 
 def load(name: str) -> dict:
     """One cached dump as a dict of arrays, with `meta` decoded back to a dict."""
-    d = np.load(PREDS / f"{name}.npz", allow_pickle=False)
+    d = np.load(pred_file(name), allow_pickle=False)
     out = {k: d[k] for k in d.files if k != "meta"}
     out["meta"] = json.loads(str(d["meta"]))
     return out
@@ -72,17 +69,17 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     from .train import beamformer_factory, reorder
 
     name = f"{run_id}_{split}_{order}"
-    if (PREDS / f"{name}.npz").exists() and not overwrite:
+    if pred_file(name).exists() and not overwrite:
         if verbose:
             print(f"  cached: {name}")
         return load(name)
 
-    cfg = json.loads((RUNS / run_id / "config.json").read_text())
+    cfg = json.loads((run_dir(run_id) / "config.json").read_text())
     dev = beamform.pick_device(device or cfg["device"])
     is_polar = bool(cfg.get("polar", False))
     model = UNet(cfg["K"] * cfg["subbands"], base=cfg.get("base", 32),
                  depth=cfg.get("depth", 3), wrap=not is_polar).to(dev).eval()
-    model.load_state_dict(torch.load(RUNS / run_id / "best.pt", map_location=dev))
+    model.load_state_dict(torch.load(run_dir(run_id) / "best.pt", map_location=dev))
 
     data = SplitData(split, cfg["channels"], cfg["K"], verbose=False, polar=is_polar)
     # Runs trained before the native disc existed have no polar_mode, and they were all
@@ -143,7 +140,7 @@ def baseline_predictions(split: str = "test_2", subset: str = "all24", device: s
     labelled-positive frames carry no beamformed evidence at all — had no data to run on.
     """
     name = f"baseline_{subset}_{split}"
-    if (PREDS / f"{name}.npz").exists() and not overwrite:
+    if pred_file(name).exists() and not overwrite:
         if verbose:
             print(f"  cached: {name}")
         return load(name)
@@ -171,7 +168,7 @@ def verify(pred: dict, run_id: str, split: str = "test_2", block: str | None = N
     analysis built on it is worthless, and the failure should surface here rather than as a
     surprising result three stages later.
     """
-    saved = json.loads((RUNS / run_id / "metrics.json").read_text())
+    saved = json.loads((run_dir(run_id) / "metrics.json").read_text())
     ref = saved[block] if block else saved[split]
     # A polar run's metrics came from the cell's own direction vector, so the check has to
     # score it the same way rather than through the grid-index lookup.
@@ -188,10 +185,16 @@ def verify(pred: dict, run_id: str, split: str = "test_2", block: str | None = N
 
 def all_runs(pattern: str = "_w32_b16_wce_s") -> list[str]:
     """Finished runs with a checkpoint, excluding archived and probe directories."""
-    return sorted(d.name for d in RUNS.iterdir()
-                  if d.is_dir() and not d.name.startswith("_")
-                  and pattern in d.name and (d / "best.pt").exists()
-                  and (d / "config.json").exists())
+    from .config import RUNS
+    found = []
+    for group in RUNS.iterdir():
+        if not group.is_dir():
+            continue
+        for d in group.iterdir():
+            if (d.is_dir() and not d.name.startswith("_") and pattern in d.name
+                    and (d / "best.pt").exists() and (d / "config.json").exists()):
+                found.append(d.name)
+    return sorted(found)
 
 
 if __name__ == "__main__":

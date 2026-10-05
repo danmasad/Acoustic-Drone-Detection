@@ -7,6 +7,7 @@ cache/
 cache_*/
 logs/
 .worktrees/
+~$*
 
 # Every run's numbers come along: metrics.json holds the final metrics plus the full per-epoch
 # history, so every table in the report can be rebuilt and reviewed without the 24 GB of audio
@@ -14,8 +15,10 @@ logs/
 runs/*
 !runs/*/
 runs/*/*
-!runs/*/metrics.json
-!runs/*/config.json
+!runs/*/*/
+runs/*/*/*
+!runs/*/*/metrics.json
+!runs/*/*/config.json
 
 # Weights for the runs the report quotes, so a clone can load a model rather than only read
 # about one: all 18 headline runs (three arrays x K of 1 and 5 x three seeds) plus the four
@@ -30,7 +33,7 @@ runs/*/*
 #
 # Still out, 163 MB: the coherence-test arrays, the LOSO folds and the base=64 probes. Those are
 # single runs whose numbers are in metrics.json and whose per-frame output is in results/preds/.
-!runs/all24_K?_w32_b16_wce_s?/best.pt
-!runs/device3_K?_w32_b16_wce_s?/best.pt
-!runs/best6_K?_w32_b16_wce_s?/best.pt
-!runs/detector_K1_w32*_s0_full/best.pt
+!runs/grid/all24_K?_w32_b16_wce_s?/best.pt
+!runs/grid/device3_K?_w32_b16_wce_s?/best.pt
+!runs/grid/best6_K?_w32_b16_wce_s?/best.pt
+!runs/detector/detector_K1_w32*_s0_full/best.pt

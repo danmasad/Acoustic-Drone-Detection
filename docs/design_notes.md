@@ -2471,3 +2471,204 @@ before any near-field ablation is trained. Until then this is a pattern on two a
 flight with the mechanism open, not a demonstration; the frame-level caveats of notes 40 apply.
 The near-field weakness of notes 25 now has a location — the loudest `all24` frames — if not yet
 a cause.
+
+## 47. A kinematic filter after the network, and two readings of the same error
+
+The network's direction jumps by tens of degrees between frames while the GPS track moves a
+fraction of a degree. A drone cannot do that. This section records the rule that rejects those
+jumps, then reads every variant twice: once in the paper's units, once in ours. The rule is
+applied to directions that were already saved. Nothing was retrained.
+
+### The angle, and the two ways of summarizing it
+
+The error on a frame is the angle between two directions on the sky. Write each as a unit
+vector, x = cos(e) cos(a), y = cos(e) sin(a), z = sin(e), and take the angle
+between the vectors. Azimuth and elevation are not limited separately. Crossing the zenith
+can flip the compass bearing by 180° while the sky angle stays a few degrees, and the vector
+angle treats that as the small step it is. The same flip at 20° elevation is a large sky
+angle and is rejected.
+
+Two summaries of that angle, and they do not convert into each other:
+
+- **Ours.** The share of drone frames whose error is at most 10°, the label tolerance.
+  Bins are 0–30, 30–60, 60–90, 90–120, 120–180 m, plus every frame. This is the number in
+  sections 21 and 35. The decoder is the brightest cell: on the rectangular grid,
+  `AZ[az_idx]` and `EL[el_idx]`; on a disc, the stored argmax direction, because those
+  indices are not the rectangular grid.
+- **Theirs.** The mean of the same angle, in their bins 0–50, 50–100, 100–200 m. Fig. 5 of
+  arXiv:2508.00307v1 is bar heights, read to the nearest degree (section 23). Their U-Net
+  bars are the frames whose last three directions already agree within 10°. Their
+  delay-and-sum bars are every frame. They do not publish a score on the 52 minutes they
+  trained on. Fig. 5 is the two held-out flights.
+
+A mean is pulled by the tail, so a bin can look moderate and still almost never land inside
+10°. On the same-site flight, delay-and-sum past 100 m has a mean of 31°, next to their 33°,
+and 2% of those frames are inside 10°. Quoting one number as if it were the other flatters
+whoever picked the kinder summary.
+
+The tables below keep every drone frame. A row labeled "stable frames" is their cut, applied
+to our predictions with `stability_flags` in `utils/check_vs_paper.py`. The filter is a third
+thing again: it changes the direction, and the frame is still scored.
+
+### The filter
+
+The cap comes from the aircraft, not from which angle scored best on these flights. A DJI
+Air 3 in sport mode is published at 21 m/s horizontally. A frame is 0.1 s, so the drone can
+move 2.1 m. At range r that is an angle of degrees(2.1 / r), plus one 4°
+cell because the decoder sits on the grid. The range in the tables is the GPS range. The
+network does not estimate range. With no range, the same rule at a declared nearest range of
+10 m is a fixed 16° cap; on the same-site 24-mic K=1 run that fixed cap landed within about
+a point of the range-dependent one.
+
+The stored direction starts as the first frame's brightest cell and resets at each segment.
+A new direction inside the cap of the stored one is taken at once. A direction outside it is
+taken only after five consecutive frames, half a second, all lie inside the cap of that
+candidate. Otherwise the stored direction is kept. A hard hold with no second chance was
+tried and it wrecks the score, because some large jumps are the model correcting itself.
+
+This sits after the mask, on the decoded direction. It is not their three-frame stability
+rule, which drops the frame. It is not an extra input channel and not a reason to retrain:
+blanking the beamforming map before the network would delete the grating-lobe evidence the
+U-Net is there to read, and feeding the network its own previous output compounds a wrong
+lock.
+
+### Same site, every variant
+
+Mar 18 flight 2, the flight Fig. 5 was checked against. Not a training flight. Three seeds
+where three exist; ± is the seed sd and is omitted when it rounds below 2. A star is one
+run. The arrow is the raw direction, then the same frames after the filter. The four-times-
+wider net has no per-frame dump.
+
+Their published U-Net on this flight is 10°, 13°, 14°, on stable frames. Their
+delay-and-sum is 38°, 75°, 33°.
+
+Mean angular error, their bins:
+
+| | 0–50 m | 50–100 m | 100–200 m |
+|---|---:|---:|---:|
+| Paper, delay-and-sum | 38° | 75° | 33° |
+| Paper, U-Net, stable frames | 10° | 13° | 14° |
+| Delay-and-sum, 24 mics * | 40° → 37° | 72° → 72° | 31° → 34° |
+| Delay-and-sum, device 3 * | 37° → 33° | 65° → 61° | 24° → 25° |
+| Delay-and-sum, searched 6 * | 42° → 29° | 66° → 41° | 37° → 18° |
+| 24 mics, K=1 | 14° → 11 ± 2° | 21° → 12 ± 6° | 59 ± 15° → 20 ± 14° |
+| 24 mics, K=5 | 14° → 12° | 18° → 15 ± 3° | 61 ± 14° → 56 ± 12° |
+| 24 mics, K=1, Tversky | 17 ± 2° → 11 ± 2° | 27 ± 3° → 13 ± 2° | 65 ± 13° → 28 ± 7° |
+| 24 mics, K=1, disc resampled | 14° → 12° | 23 ± 2° → 18 ± 3° | 81 ± 12° → 84 ± 10° |
+| 24 mics, K=1, disc native | 14° → 12° | 24 ± 2° → 17 ± 4° | 50 ± 9° → 39 ± 35° |
+| 24 mics, K=1, native disc + Tversky | 17 ± 2° → 13° | 25 ± 4° → 17 ± 8° | 44 ± 22° → 21 ± 11° |
+| Device 3, K=1 | 15° → 11° | 23° → 15 ± 3° | 64 ± 2° → 27 ± 18° |
+| Device 3, K=5 | 14° → 13° | 22° → 20 ± 3° | 75 ± 4° → 81 ± 14° |
+| Device 3, K=9 | 13° → 13° | 22 ± 2° → 21 ± 3° | 54 ± 26° → 54 ± 26° |
+| Device 3, K=9, disc native | 13° → 12° | 21 ± 2° → 20 ± 2° | 64° → 63 ± 2° |
+| Searched 6, K=1 | 20° → 13° | 37° → 29 ± 2° | 59 ± 5° → 16 ± 7° |
+| Searched 6, K=5 | 18° → 15° | 34° → 30 ± 3° | 50 ± 7° → 33 ± 18° |
+| Device 1+3, K=1 * | 13° → 8° | 20° → 12° | 55° → 36° |
+| Device 1, K=1 * | 15° → 11° | 39° → 30° | 69° → 73° |
+| Device 4, K=1 * | 18° → 14° | 35° → 36° | 66° → 80° |
+| Symmetric 6, K=1 * | 16° → 12° | 31° → 13° | 49° → 8° |
+| Quad 4, K=1 * | 20° → 15° | 32° → 29° | 64° → 12° |
+
+Share of frames inside 10°, our bins:
+
+| | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m | all |
+|---|---:|---:|---:|---:|---:|---:|
+| Delay-and-sum, 24 mics * | 50% → 52% | 33% → 36% | 18% → 21% | 3% → 0% | 2% → 0% | 33% → 35% |
+| Delay-and-sum, device 3 * | 54% → 56% | 36% → 39% | 27% → 32% | 7% → 9% | 16% → 17% | 38% → 41% |
+| Delay-and-sum, searched 6 * | 39% → 43% | 23% → 27% | 19% → 34% | 6% → 9% | 13% → 0% | 26% → 33% |
+| 24 mics, K=1 | 66 ± 5% → 66 ± 5% | 79% → 83 ± 3% | 73% → 82 ± 6% | 57 ± 3% → 74 ± 12% | 27 ± 11% → 55 ± 13% | 70 ± 2% → 76% |
+| 24 mics, K=5 | 63% → 62% | 79 ± 3% → 81 ± 2% | 75% → 77 ± 3% | 60 ± 2% → 64 ± 6% | 27 ± 6% → 34 ± 12% | 70% → 72% |
+| 24 mics, K=1, Tversky | 60 ± 2% → 61 ± 3% | 74 ± 3% → 82 ± 7% | 66% → 81% | 42 ± 7% → 70 ± 4% | 20 ± 5% → 50 ± 15% | 64 ± 2% → 73 ± 2% |
+| 24 mics, K=1, disc resampled | 73% → 74% | 76% → 80% | 67 ± 2% → 75 ± 4% | 63 ± 5% → 80 ± 5% | 22 ± 6% → 26 ± 6% | 71% → 76% |
+| 24 mics, K=1, disc native | 71 ± 3% → 72 ± 3% | 75 ± 3% → 78 ± 3% | 67% → 77 ± 5% | 65 ± 7% → 69 ± 7% | 38 ± 12% → 73 ± 22% | 70% → 75% |
+| 24 mics, K=1, native disc + Tversky | 66 ± 2% → 67 ± 2% | 73 ± 4% → 77 ± 2% | 65 ± 4% → 74 ± 9% | 49 ± 8% → 64 ± 16% | 36 ± 10% → 55 ± 28% | 66 ± 3% → 71 ± 4% |
+| Device 3, K=1 | 69 ± 3% → 70 ± 2% | 75% → 81 ± 2% | 68% → 77% | 56% → 64 ± 20% | 25 ± 4% → 65 ± 11% | 69% → 75 ± 2% |
+| Device 3, K=5 | 69 ± 4% → 69 ± 4% | 79 ± 2% → 80 ± 2% | 72 ± 2% → 75 ± 2% | 55 ± 10% → 54 ± 11% | 22 ± 4% → 20 ± 8% | 71 ± 2% → 72 ± 2% |
+| Device 3, K=9 | 72 ± 2% → 72 ± 2% | 78 ± 3% → 78 ± 4% | 73 ± 3% → 74 ± 4% | 71 ± 12% → 74 ± 12% | 24 ± 6% → 22 ± 4% | 73% → 73 ± 2% |
+| Device 3, K=9, disc native | 71 ± 3% → 71 ± 3% | 80 ± 2% → 81 ± 3% | 72 ± 3% → 72 ± 2% | 57 ± 5% → 60 ± 4% | 25 ± 6% → 30 ± 9% | 73 ± 2% → 73 ± 2% |
+| Searched 6, K=1 | 59 ± 4% → 61 ± 4% | 62% → 65 ± 3% | 41 ± 3% → 47 ± 7% | 24 ± 3% → 41 ± 13% | 9 ± 3% → 44 ± 41% | 52% → 57 ± 3% |
+| Searched 6, K=5 | 55 ± 3% → 55 ± 3% | 59% → 61% | 50% → 55 ± 2% | 30 ± 5% → 41 ± 5% | 19 ± 7% → 47 ± 43% | 53% → 56 ± 2% |
+| Device 1+3, K=1 * | 72% → 73% | 81% → 91% | 72% → 83% | 55% → 68% | 20% → 58% | 73% → 81% |
+| Device 1, K=1 * | 69% → 69% | 69% → 76% | 46% → 49% | 22% → 38% | 8% → 18% | 59% → 63% |
+| Device 4, K=1 * | 66% → 66% | 60% → 62% | 43% → 43% | 32% → 17% | 1% → 0% | 54% → 55% |
+| Symmetric 6, K=1 * | 67% → 67% | 72% → 78% | 58% → 73% | 39% → 72% | 34% → 58% | 64% → 72% |
+| Quad 4, K=1 * | 58% → 59% | 61% → 65% | 47% → 59% | 41% → 71% | 10% → 58% | 54% → 62% |
+
+On the training flights the same filter moves the overall share by 1 to 4 points: 24 mics
+K=1 from 83% to 85%, device 3 K=1 from 84% to 88%, and device 3 at K=5 and K=9 stays at
+90–91% and 88–89%. That is the fit set. The claim is the two flights below and above.
+
+### New site, a second look
+
+Oct 11 flight 5 was scored once, sealed, in section 35. The numbers here are a second pass
+over dumps that already existed, to put that flight in their bins and under this filter.
+It is 1,592 drone frames, about 2.7 minutes. Their bins hold 677, 677 and 238 frames. The
+cap still uses GPS range, and the form of the rule was settled on the same-site flight
+first.
+
+Their U-Net on this flight is 12°, 24°, 54°. Their delay-and-sum is 8°, 29°, 92°.
+
+Mean angular error, every frame, then after the filter:
+
+| | 0–50 m | 50–100 m | 100–200 m |
+|---|---:|---:|---:|
+| Paper, delay-and-sum | 8° | 29° | 92° |
+| Paper, U-Net, stable frames | 12° | 24° | 54° |
+| Delay-and-sum, 24 mics | 9° → 7° | 23° → 15° | 83° → 13° |
+| 24 mics, K=1 | 24 ± 3° → 21 ± 3° | 19 ± 2° → 15 ± 2° | 46 ± 7° → 8 ± 3° |
+| 24 mics, K=5 | 25 ± 7° → 23 ± 9° | 23 ± 6° → 21 ± 4° | 57 ± 15° → 37 ± 10° |
+| Device 3, K=1 | 17° → 14° | 19° → 12 ± 4° | 26 ± 7° → 12 ± 5° |
+| Device 3, K=5 | 16 ± 3° → 14 ± 2° | 18 ± 2° → 17 ± 2° | 19 ± 8° → 8 ± 2° |
+| Device 3, K=9 | 17° → 17° | 17 ± 2° → 17° | 24 ± 6° → 19 ± 9° |
+
+The same predictions on the frames they keep, raw, so the cut matches theirs:
+
+| Stable frames | 0–50 m | 50–100 m | 100–200 m | Frames kept |
+|---|---:|---:|---:|---|
+| Paper, U-Net | 12° | 24° | 54° | not stated |
+| Delay-and-sum, 24 mics | 7° | 14° | 87° | 616 / 513 / 57 of 677 / 677 / 238 |
+| 24 mics, K=1 | 16 ± 4° | 10 ± 3° | 20 ± 9° | 577 / 482 / 105 |
+| Device 3, K=1 | 14° | 12 ± 3° | 11 ± 2° | 601 / 576 / 126 |
+| Device 3, K=5 | 14 ± 2° | 15° | 13 ± 4° | 635 / 619 / 218 |
+| Device 3, K=9 | 16° | 15 ± 2° | 16 ± 4° | 650 / 613 / 172 |
+
+Share of all frames inside 10°, pooled: delay-and-sum 64% → 79%; 24 mics K=1,
+52 ± 6% → 61 ± 5%; 24 mics K=5, 53 ± 7% → 56 ± 7%; device 3 K=1, 54 ± 5% → 61 ± 3%;
+device 3 K=5, 57 ± 8% → 60 ± 8%; device 3 K=9, 52 ± 3% → 52 ± 4%. The closest 30 m stay
+near 30% for every network. The frames past 120 m are one 7-second pass, 67 frames.
+
+### Where we are ahead, and where we are not
+
+**Same site, under 100 m.** Even with them, and slightly ahead on the frames they keep.
+Section 23 already has that cut: stable-frame means of 7–10° and 9–12° against their 10°
+and 13°. After the filter, and keeping every frame, 24 mics at K=1 reads 11° and 12°.
+
+**Same site, past 100 m.** Theirs. The bin is 374 frames. On the frames they keep we are
+still around 30–70° (section 23). On every frame the single-frame networks sit near 50–65°,
+and the filter brings the better of them to about 20° (24 mics K=1, 59° → 20°; device 3
+K=1, 64° → 27°). Their published mean is 14°. The filter is the largest move we have made
+in that bin, and it does not land on their number.
+
+**New site, under 50 m.** Theirs. Their U-Net is 12°. Our 24-mic network is 24° on every
+frame and 16° on the frames they keep. Device 3 is 17° and 14°. The closest 30 m, near 30%
+inside 10°, are the same near-field failure as sections 35 and 46.
+
+**New site, from 50 m out.** Ours, and the gap past 100 m is large. On the frames they
+keep, device 3 at K=1 is 12° and 11° against their 24° and 54°. The 24-mic network is 10°
+and 20° on that cut. This is a second look at one short flight, so it is a direction, not
+a sealed result. The size of the far-bin gap is what makes it readable anyway.
+
+**The filter against learned history.** On a single frame it adds about 5 to 9 points on
+the same site (24 mics 70% → 76%, device 3 69% → 75%) and about 7 points on the new site
+(52% → 61%, 54% → 61%). Once five or nine frames are already stacked it adds about a point,
+and on device 3 at K=9 it adds none (73% → 73% on the same site, 52% → 52% on the new
+site). One noisy cell still favors the stack: same-site device 3 at 90–120 m, K=9 raw
+71 ± 12% against filtered K=1 at 64 ± 20%, and the spreads overlap. The single-frame
+network plus the filter is the combination that transfers. The stack learned the same
+kind of smoothness from two flights at the training site and did not.
+
+**Where the filter makes a row worse.** It holds a direction. If that direction is wrong
+and the raw jumps would have been right, the row drops. On the same site that is device 4
+past 100 m (66° → 80°, and 32% → 17% inside 10° at 90–120 m) and device 3 at K=5 past
+100 m (75° → 81°). The resampled disc past 100 m does not move (81° → 84°). A filter is
+not a correction for an array that is stably wrong.

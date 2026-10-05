@@ -1,6 +1,6 @@
 """Microphone positions and steering vectors.
 
-Ported from utils/validate_dataset.py. The array was recalibrated between sessions, so
+Ported from utils/validate/validate_dataset.py. The array was recalibrated between sessions, so
 positions are always read from that session's own alignment_params.json and never
 hardcoded.
 """
