@@ -1,0 +1,420 @@
+{
+  "config": {
+    "run_id": "detector_K1_w32_conf_log64_s0_loso_B_Mar18_f1",
+    "K": 1,
+    "width": 32,
+    "seed": 0,
+    "lr": 0.001,
+    "batch": 32,
+    "channels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23
+    ],
+    "band": [
+      200.0,
+      4000.0
+    ],
+    "input_mean": 145.69725036621094,
+    "input_std": 5.877434730529785,
+    "n_params": 85505,
+    "train_drone_rate": 0.771945783680524,
+    "confusers": true,
+    "mix_prob": 0.5,
+    "log_bins": 64,
+    "monitor_fraction": 0.2,
+    "early_stopping_on": "interleaved blocks of the training scenes",
+    "train_segments": [
+      "Nov_25_2024_f11_drone",
+      "Nov_25_2024_f11_pre_takeoff",
+      "Mar_18_2025_f2_drone",
+      "Mar_18_2025_f2_no_drone_1",
+      "Mar_18_2025_f2_no_drone_2",
+      "Mar_18_2025_f2_pre_takeoff"
+    ],
+    "val_segments": [
+      "Mar_18_2025_f1_drone",
+      "Mar_18_2025_f1_pre_takeoff"
+    ]
+  },
+  "best_epoch": 0,
+  "test_2": {
+    "auroc": 0.7579990685808006,
+    "auprc": 0.9855568476456864,
+    "specificity_at_95_recall": 0.21087533156498675,
+    "per_channel_auroc": 0.6616298379865547,
+    "by_n_channels": {
+      "1": 0.7372098595446845,
+      "2": 0.7437587789259281,
+      "6": 0.71150471446602,
+      "24": 0.7579990685808006
+    },
+    "f1_f1": 0.9791274498948068,
+    "f1_precision": 0.9591084115190629,
+    "f1_recall": 1.0,
+    "f1_threshold": -2.2448816299438477,
+    "false_alarms_per_hour": 36000.0,
+    "threshold_at_95_recall": -1.4500106573104858,
+    "n_frames": 18439
+  },
+  "last_epoch": {
+    "auroc": 0.5139650635307387,
+    "auprc": 0.9664715533768895,
+    "specificity_at_95_recall": 0.002652519893899204,
+    "per_channel_auroc": 0.5398926627490065,
+    "by_n_channels": {
+      "1": 0.5996981511853847,
+      "2": 0.6117625046027257,
+      "6": 0.6131506716792319,
+      "24": 0.5139650635307387
+    },
+    "f1_f1": 0.9791274498948068,
+    "f1_precision": 0.9591084115190629,
+    "f1_recall": 1.0,
+    "f1_threshold": -1.739917278289795,
+    "false_alarms_per_hour": 36000.0,
+    "threshold_at_95_recall": -0.34113791584968567,
+    "n_frames": 18439
+  },
+  "history": [
+    {
+      "auroc": 0.8551004275797752,
+      "auprc": 0.9587891402309358,
+      "specificity_at_95_recall": 0.20713785864240727,
+      "per_channel_auroc": 0.7545663455351753,
+      "by_n_channels": {
+        "1": 0.8053834872730541,
+        "2": 0.8142555868982825,
+        "6": 0.8321686304477006,
+        "24": 0.8551004275797752
+      },
+      "f1_f1": 0.8792320219422303,
+      "f1_precision": 0.7847307221542228,
+      "f1_recall": 0.9996102124342233,
+      "f1_threshold": -1.722888469696045,
+      "false_alarms_per_hour": 35445.76627011896,
+      "threshold_at_95_recall": -1.2630685567855835,
+      "n_frames": 6560,
+      "epoch": 0,
+      "train_loss": 0.2727482873795409,
+      "seconds": 9.144902229309082
+    },
+    {
+      "auroc": 0.5991446767879596,
+      "auprc": 0.8434294720067481,
+      "specificity_at_95_recall": 0.12176347095871239,
+      "per_channel_auroc": 0.5738398165634438,
+      "by_n_channels": {
+        "1": 0.5418906388110852,
+        "2": 0.5745943338417302,
+        "6": 0.5804118246108705,
+        "24": 0.5991446767879596
+      },
+      "f1_f1": 0.8792229003696381,
+      "f1_precision": 0.7865272223931098,
+      "f1_recall": 0.9966868056908985,
+      "f1_threshold": -1.2409359216690063,
+      "false_alarms_per_hour": 34967.109867039886,
+      "threshold_at_95_recall": -0.5095012784004211,
+      "n_frames": 6560,
+      "epoch": 1,
+      "train_loss": 0.18216264374068245,
+      "seconds": 8.950235843658447
+    },
+    {
+      "auroc": 0.4133939899885423,
+      "auprc": 0.7307515062926466,
+      "specificity_at_95_recall": 0.028691392582225334,
+      "per_channel_auroc": 0.482978654039077,
+      "by_n_channels": {
+        "1": 0.4649883343318969,
+        "2": 0.49801348817728486,
+        "6": 0.5153815383352253,
+        "24": 0.4133939899885423
+      },
+      "f1_f1": 0.8777692241895474,
+      "f1_precision": 0.7821646341463414,
+      "f1_recall": 1.0,
+      "f1_threshold": -1.683741569519043,
+      "false_alarms_per_hour": 35999.99999999999,
+      "threshold_at_95_recall": -0.4445682764053345,
+      "n_frames": 6560,
+      "epoch": 2,
+      "train_loss": 0.1369500880136439,
+      "seconds": 8.972615957260132
+    },
+    {
+      "auroc": 0.6214401709500792,
+      "auprc": 0.8678594112468423,
+      "specificity_at_95_recall": 0.05108467459762071,
+      "per_channel_auroc": 0.5500255562258107,
+      "by_n_channels": {
+        "1": 0.4458696497462767,
+        "2": 0.44879005602548433,
+        "6": 0.46932918760115483,
+        "24": 0.6214401709500792
+      },
+      "f1_f1": 0.8783077845336987,
+      "f1_precision": 0.7833791628475405,
+      "f1_recall": 0.999415318651335,
+      "f1_threshold": -1.4172769784927368,
+      "false_alarms_per_hour": 35722.88313505948,
+      "threshold_at_95_recall": -0.29410213232040405,
+      "n_frames": 6560,
+      "epoch": 3,
+      "train_loss": 0.10201808000185424,
+      "seconds": 9.005440950393677
+    },
+    {
+      "auroc": 0.41151024406184283,
+      "auprc": 0.7214573826380677,
+      "specificity_at_95_recall": 0.04548635409377187,
+      "per_channel_auroc": 0.5032339945583401,
+      "by_n_channels": {
+        "1": 0.5827967844298825,
+        "2": 0.5892881521628095,
+        "6": 0.5671332706600025,
+        "24": 0.41151024406184283
+      },
+      "f1_f1": 0.8777692241895474,
+      "f1_precision": 0.7821646341463414,
+      "f1_recall": 1.0,
+      "f1_threshold": -1.442330002784729,
+      "false_alarms_per_hour": 35999.99999999999,
+      "threshold_at_95_recall": -0.12615875899791718,
+      "n_frames": 6560,
+      "epoch": 4,
+      "train_loss": 0.07886419679074572,
+      "seconds": 9.034297943115234
+    }
+  ],
+  "confuser_rejection": {
+    "clean_fire_rate": 0.7891246684350133,
+    "mean_fire_rate": 0.7651950431749194,
+    "hard_class_fire_rate": 0.6931035875888817,
+    "worst_class": "brushing_teeth",
+    "per_class": {
+      "airplane": {
+        "n": 14,
+        "fire_rate": 0.5
+      },
+      "breathing": {
+        "n": 15,
+        "fire_rate": 0.8
+      },
+      "brushing_teeth": {
+        "n": 18,
+        "fire_rate": 1.0
+      },
+      "can_opening": {
+        "n": 8,
+        "fire_rate": 1.0
+      },
+      "car_horn": {
+        "n": 11,
+        "fire_rate": 0.7272727272727273
+      },
+      "cat": {
+        "n": 16,
+        "fire_rate": 0.625
+      },
+      "chainsaw": {
+        "n": 10,
+        "fire_rate": 0.7
+      },
+      "chirping_birds": {
+        "n": 14,
+        "fire_rate": 0.8571428571428571
+      },
+      "church_bells": {
+        "n": 14,
+        "fire_rate": 0.8571428571428571
+      },
+      "clapping": {
+        "n": 11,
+        "fire_rate": 0.9090909090909091
+      },
+      "clock_alarm": {
+        "n": 11,
+        "fire_rate": 1.0
+      },
+      "clock_tick": {
+        "n": 14,
+        "fire_rate": 0.7857142857142857
+      },
+      "coughing": {
+        "n": 10,
+        "fire_rate": 0.8
+      },
+      "cow": {
+        "n": 16,
+        "fire_rate": 0.6875
+      },
+      "crackling_fire": {
+        "n": 18,
+        "fire_rate": 0.8888888888888888
+      },
+      "crickets": {
+        "n": 15,
+        "fire_rate": 0.8666666666666667
+      },
+      "crow": {
+        "n": 13,
+        "fire_rate": 1.0
+      },
+      "crying_baby": {
+        "n": 16,
+        "fire_rate": 0.8125
+      },
+      "dog": {
+        "n": 11,
+        "fire_rate": 0.9090909090909091
+      },
+      "door_wood_creaks": {
+        "n": 13,
+        "fire_rate": 0.8461538461538461
+      },
+      "door_wood_knock": {
+        "n": 10,
+        "fire_rate": 0.5
+      },
+      "drinking_sipping": {
+        "n": 11,
+        "fire_rate": 0.7272727272727273
+      },
+      "engine": {
+        "n": 20,
+        "fire_rate": 0.7
+      },
+      "fireworks": {
+        "n": 19,
+        "fire_rate": 0.8421052631578947
+      },
+      "footsteps": {
+        "n": 11,
+        "fire_rate": 0.45454545454545453
+      },
+      "frog": {
+        "n": 11,
+        "fire_rate": 0.5454545454545454
+      },
+      "glass_breaking": {
+        "n": 3,
+        "fire_rate": 0.6666666666666666
+      },
+      "hand_saw": {
+        "n": 14,
+        "fire_rate": 0.7142857142857143
+      },
+      "helicopter": {
+        "n": 17,
+        "fire_rate": 0.7647058823529411
+      },
+      "hen": {
+        "n": 25,
+        "fire_rate": 0.8
+      },
+      "insects": {
+        "n": 15,
+        "fire_rate": 0.8
+      },
+      "keyboard_typing": {
+        "n": 15,
+        "fire_rate": 0.8666666666666667
+      },
+      "laughing": {
+        "n": 14,
+        "fire_rate": 0.7142857142857143
+      },
+      "mouse_click": {
+        "n": 11,
+        "fire_rate": 0.6363636363636364
+      },
+      "pig": {
+        "n": 17,
+        "fire_rate": 1.0
+      },
+      "pouring_water": {
+        "n": 17,
+        "fire_rate": 0.7058823529411765
+      },
+      "rain": {
+        "n": 13,
+        "fire_rate": 0.7692307692307693
+      },
+      "rooster": {
+        "n": 13,
+        "fire_rate": 0.5384615384615384
+      },
+      "sea_waves": {
+        "n": 13,
+        "fire_rate": 0.6153846153846154
+      },
+      "sheep": {
+        "n": 14,
+        "fire_rate": 0.7857142857142857
+      },
+      "siren": {
+        "n": 20,
+        "fire_rate": 0.85
+      },
+      "sneezing": {
+        "n": 5,
+        "fire_rate": 1.0
+      },
+      "snoring": {
+        "n": 13,
+        "fire_rate": 0.8461538461538461
+      },
+      "thunderstorm": {
+        "n": 9,
+        "fire_rate": 0.6666666666666666
+      },
+      "toilet_flush": {
+        "n": 14,
+        "fire_rate": 0.7142857142857143
+      },
+      "train": {
+        "n": 12,
+        "fire_rate": 0.5833333333333334
+      },
+      "vacuum_cleaner": {
+        "n": 20,
+        "fire_rate": 0.65
+      },
+      "washing_machine": {
+        "n": 13,
+        "fire_rate": 0.6923076923076923
+      },
+      "water_drops": {
+        "n": 14,
+        "fire_rate": 0.7142857142857143
+      },
+      "wind": {
+        "n": 17,
+        "fire_rate": 0.8235294117647058
+      }
+    }
+  }
+}

@@ -6,6 +6,7 @@ Everything else is fixed by the dataset or by the paper we are comparing against
 lives in one place and is never re-derived locally.
 """
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,60 @@ CACHE = REPO / "cache"
 RUNS = REPO / "runs"
 RESULTS = REPO / "results"
 FIGURES = REPO / "figures"
+
+# A run id names one training. The directory around it names the question that training
+# answered, so the headline grid, the loss comparison, and the detector stay apart.
+_COHERENCE = {"device1", "device4", "device1_3", "symmetric6", "quad4"}
+_DUMP_NAME = re.compile(r"^(?P<run>.+)_(?P<split>test_1|test_2|train)_(?P<order>causal|freeze\d+)$")
+
+
+def experiment_of(run_id: str) -> str:
+    """Which results folder a run belongs in. Prefix order is the classification."""
+    if run_id.startswith("detector_"):
+        return "detector"
+    if "tversky" in run_id:
+        return "loss"
+    if "_polarn" in run_id or "_polar" in run_id:
+        return "disc"
+    if run_id.split("_K")[0] in _COHERENCE:
+        return "arrays"
+    if "_b8_" in run_id or "_b32_" in run_id:
+        return "bins"
+    if "order_probe" in run_id or run_id.endswith("_probe") or "_w32_" not in run_id:
+        return "probes"
+    return "grid"
+
+
+def run_dir(run_id: str) -> Path:
+    return RUNS / experiment_of(run_id) / run_id
+
+
+def pred_file(name: str) -> Path:
+    """Dump stem, with or without .npz, to its file under results/preds/<experiment>/."""
+    stem = name[:-4] if name.endswith(".npz") else name
+    if stem.startswith("baseline_"):
+        return RESULTS / "preds" / "baseline" / f"{stem}.npz"
+    match = _DUMP_NAME.match(stem)
+    if match is None:
+        raise ValueError(f"dump name {name!r} is not baseline_* or {{run}}_{{split}}_{{order}}")
+    return RESULTS / "preds" / experiment_of(match.group("run")) / f"{stem}.npz"
+
+
+def table_file(name: str) -> Path:
+    """A summary JSON, filed by the question it answers."""
+    if name.startswith("history_") or name == "paired_k.json":
+        group = "history"
+    elif name.startswith("polar_"):
+        group = "disc"
+    elif name.startswith("demand_") or name.startswith("detector_loso_"):
+        group = "detector"
+    else:
+        group = "scores"
+    return RESULTS / "tables" / group / name
+
+
+def search_file() -> Path:
+    return RESULTS / "search" / "subset_search.npz"
 
 # --- inherited from the dataset and create_dataset.py ---------------------------------
 SR = 48000
@@ -56,7 +111,7 @@ HIT_THRESHOLDS = (5, 10, 20)     # strict / inherited / operational
 # Pinned explicitly, never recomputed at run time: the array has 3-fold symmetry so
 # several subsets tie exactly, and a re-run could silently return a mirror image.
 # Sidelobe figures are the 95th percentile worst false peak over 250 source directions
-# from the dense search in results/subset_search.npz (design_notes section 14).
+# from the dense search in results/search/subset_search.npz (design_notes section 14).
 _DEV = {k: list(range(CH_PER_DEVICE * k, CH_PER_DEVICE * (k + 1))) for k in range(4)}
 
 MIC_SUBSETS = {
@@ -103,7 +158,7 @@ _SPLIT_OF_ROLE = {
 # genuine no-drone audio that the dataset's own splits never use. Mining it more than
 # doubles the negative set and, more importantly, spreads it over four sessions instead of
 # one 5-minute tail. Verified ambient rather than drone by beamformed peak contrast
-# (utils/probe_pretakeoff.py); a segment inherits the split of its own session, which keeps
+# (utils/validate/probe_pretakeoff.py); a segment inherits the split of its own session, which keeps
 # test audio out of training by construction.
 PRE_TAKEOFF_START_S = 0.2      # skip the very first samples: recorder corrections are negative
 PRE_TAKEOFF_MARGIN_S = 20.0    # drop the run-up to takeoff: motor spin-up, handling, chatter

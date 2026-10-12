@@ -91,10 +91,27 @@ class Beamformer:
         return e.reshape(e.shape[0], self.n_subbands, *self.grid_shape)
 
 
+def _dirs_key(dirs: np.ndarray | None, grid_shape) -> tuple:
+    """Identity of a direction set, for the memo key.
+
+    Without this the cache was keyed on session, channels, sub-bands, band and device only, so a
+    run steering at the polar disc's own cells would be handed back the rectangular steering
+    tensor built earlier for the same session — same shape family, silently wrong directions.
+    The hash costs microseconds on a 50 KB array and is computed once per Beamformer.
+    """
+    if dirs is None:
+        return ("grid", tuple(grid_shape))
+    import hashlib
+
+    digest = hashlib.sha1(np.ascontiguousarray(dirs, dtype=np.float64)).hexdigest()[:16]
+    return (digest, dirs.shape, tuple(grid_shape))
+
+
 def get(align: dict, channels, freqs: np.ndarray, key: str = "", **kw) -> Beamformer:
     """Memoized Beamformer. `key` should identify the session calibration."""
     ck = (key, tuple(channels), kw.get("n_subbands", N_SUBBANDS),
-          kw.get("band", MODEL_BAND), str(kw.get("device", "auto")))
+          kw.get("band", MODEL_BAND), str(kw.get("device", "auto")),
+          _dirs_key(kw.get("dirs"), kw.get("grid_shape", GRID_SHAPE)))
     if ck not in _CACHE:
         _CACHE[ck] = Beamformer(align, channels, freqs, **kw)
     return _CACHE[ck]

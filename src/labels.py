@@ -1,6 +1,6 @@
 """Per-frame ground truth from the GPS logs.
 
-Ported from utils/validate_dataset.py, generalized to every segment. The drone's position
+Ported from utils/validate/validate_dataset.py, generalized to every segment. The drone's position
 comes from its own flight log, projected into UTM and taken relative to the array, whose
 position comes from a separate stationary reference log. The array's compass heading was
 never recorded, so each session ships one hand-measured `initial_azimuth_deg` and every

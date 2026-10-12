@@ -564,6 +564,60 @@ so the reasoning is not lost:
 - Speed / Doppler head: still the cheapest thing to cut if time runs short. Baseline to
   beat is simply differentiating the estimated direction track over time.
 
+### Two inherited parameters, reasoned after the fact (added in review, Sep 2026)
+
+**The band-pass filter and the analysis window.** `src/stft_cache.py` applies a 5th-order
+Butterworth band-pass, 200–8000 Hz, with `filtfilt`, and then takes a plain `rfft` of each
+4800-sample frame — a rectangular window. Both are inherited from the dataset's
+`create_dataset.py`; neither was chosen here. What each actually does:
+
+- The **8 kHz upper edge does nothing.** The cache keeps 200–4000 Hz and the model reads only
+  200–2200 Hz, so no retained bin is within an octave of it.
+- The **200 Hz lower edge is the filter's one live effect**, and it exists because of the window.
+  A rectangular window's sidelobes start at −13 dB and fall only 6 dB per octave, so wind energy
+  below 200 Hz, which is large, would leak into the lowest cached bins. Five poles, applied forward
+  and backward, give about 60 dB of attenuation an octave below the edge, which removes that
+  energy before the FFT can smear it. Zero phase is not what matters for beamforming here — every
+  channel gets the identical filter, so it cancels in the inter-channel phase that delay-and-sum
+  reads — but it costs nothing. Filtering runs in blocks with one frame of context on each side,
+  discarded afterwards, so block edges do not reach the cache.
+- The **rectangular window was never tested.** A Hann window would push the first sidelobe to
+  −31 dB, falling 18 dB per octave, at the price of a main lobe twice as wide (irrelevant: the model
+  averages bins into 125 Hz sub-bands) and of down-weighting each frame's edges, which without
+  overlap discards some signal. Overlap would recover it but breaks the one-frame-per-GPS-row
+  identity below. So the test, review item B2, keeps the frame boundaries, rebuilds the cache with
+  Hann (`--window hann`, a separate `cache_hann/`), and reruns only the delay-and-sum baseline. If
+  nothing moves, the rectangular window stays and this paragraph is its justification; if it
+  improves, the headline cells are retrained and the filter loses its reason to exist. Any change
+  must also be made in `src/esc50.py` and `src/demand.py`, which copy the same filter and window so
+  that mixed spectra match ours. Windowing is linear, so spectral mixing (section 19) stays exact
+  under either window.
+
+**The frame length.** 100 ms (4800 samples at 48 kHz) is fixed by the labels, not by acoustics:
+the GPS log is 10 Hz and row k of it is frame k of the segment, which is the whole alignment
+scheme. Any other length means interpolating the labels. Whether 100 ms is a good length can be
+checked from test 2's own labels, taking the great-circle step of the true direction between
+consecutive drone frames:
+
+| Range | Frames | Median step per frame | 95th percentile | Share > 4° (one azimuth cell) |
+|---|---|---|---|---|
+| 0–15 m | 1937 | 0.08° | 2.10° | 0.1% |
+| 15–30 m | 2073 | 0.25° | 1.14° | 0 |
+| 30–60 m | 3790 | 0.30° | 0.57° | 0 |
+| 60–100 m | 3752 | 0.15° | 0.42° | 0 |
+| 100–200 m | 374 | 0.10° | 0.34° | 0 |
+
+So the drone never crosses a grid cell within one frame, except in rare close passes, and the frame
+is short compared with the motion: a frame two to three times longer would still keep 95% of
+frames under one cell beyond 15 m, and would average away more noise per estimate. That is the
+argument for longer frames, and it is also exactly what stacking K frames does, with the
+difference that the network learns how to weight them rather than averaging blindly — and stacking
+is what paid, in the far field where the signal is weakest (sections 34 and 41). So 100 ms stays,
+for a reason now rather than by inheritance: it matches the label rate, motion does not limit it,
+and the time it leaves on the table is better spent by stacking than by lengthening. The 10 Hz bin
+spacing it gives is finer than the model uses (125 Hz sub-bands); whether the rotor's harmonic comb
+needs that resolution is unmeasured until the spectrogram check (review item B1).
+
 ## 12. Scope cuts already made (keep cut unless time appears)
 
 Dropped from earlier drafts to fit a realistic week: ESC-50 hard-negative injection via
@@ -1331,9 +1385,13 @@ row exists for the comparison table and nothing else.
 Our error stays high in the far bin where theirs does not. That bin is 374 frames, 2.5% of the
 split, and three things about it are worth recording:
 
-- The drone is essentially inaudible there. Mean DAS peak energy on far drone frames is
-  **138.8 dB against 139.8 dB on no-drone frames** — the loudest thing in the map is not the
-  drone, so there is nothing for a brightest-pixel or a mask to lock onto.
+- **The drone is not the loudest thing in the map there.** Mean DAS peak energy on far drone frames
+  is **138.8 dB against 139.8 dB on no-drone frames**, so a brightest-pixel or mask decoder has
+  nothing to lock onto. Stated precisely, because the stronger sentence is tempting and wrong: this
+  is a property of the *peak of the beamformed map over 200–2200 Hz*, not of the audio. A harmonic
+  comb sitting 10 dB under a broadband floor is invisible to peak energy and still recoverable by a
+  matched filter or a comb detector, so "no acoustic evidence" would overstate it. What we measured
+  bounds what *our* decoder can do, not what the recording contains.
 - The failure is azimuth, not elevation: 53° mean azimuth error against 11° in elevation, with
   predictions scattered across az −40° to 180° while the truth sits in a 132°–170° arc. The
   model keeps the height roughly right and loses the bearing entirely.
@@ -1354,3 +1412,1263 @@ also rules out post-processing as the source of the far-range gap.
 **Measured cost at `base=32`:** 84 s per epoch at K=1, 165 s at K=5, converging in 19 and 22
 epochs. That is 27 min and 63 min per run, so the 18-run headline grid is about 14 h — inside
 budget, unlike 40–50 h at `base=64`.
+
+## 24. Per-frame prediction dumps: why summaries were never enough
+
+`metrics.json` holds one number per metric per run, and three questions we still owed the report
+cannot be answered from summaries at all: detection against range (a pooled AUROC hides that the
+drone stops being the loudest peak past 100 m), temporal integration (needs frames in time order), and
+frame-paired comparisons (asking whether K=5 beats K=1 *on the same frame*, which removes the
+largest variance term).
+
+`src/predict.py` runs a checkpoint once and writes every per-frame quantity to `results/preds/`:
+presence score, both decoders' directions, the argmax cell, the labels, and — the part that makes
+the rest possible — `seg` and `frame`, so frames can be re-sorted into time order and grouped by
+scene. There are 63 of them for test 2, including the four history depths on the nine K=5 runs.
+
+Three design decisions worth recording:
+
+- **They live under `results/` and are committed**, 20 MB for all 63. They began under
+  `cache/preds/`, which was wrong the moment the analyses started depending on them: `cache/` is
+  by definition the directory a clone rebuilds from audio, and rebuilding these needs the 4 GB
+  STFT cache and a GPU. Committing them is what lets someone with a fresh clone and no dataset
+  re-derive every number in the report, not just read it. `savez_compressed` rather than `savez`
+  once they became committed artifacts: most columns are grid indices and repeated labels, so
+  1.17 MB per dump becomes 0.34 MB, and `np.load` reads either form without being told which.
+
+- **`utils/check_vs_paper.py` now imports it** rather than carrying its own copy of "run the model
+  and decode a direction". Two implementations of that would eventually disagree, and the
+  disagreement would look like a result.
+- **The classical baseline is dumped too.** `src/baseline.py` computed per-frame arrays and threw
+  them away, and the audibility analysis in section 25 needs exactly those.
+
+Gate: every causal dump reproduces its own run's `metrics.json` to 1e-6. That check is why the
+`summarize()` refactor to accept explicit predicted angles could be trusted — if it had changed
+the rectangular path by even a rounding step, 24 runs would have said so at once.
+
+## 25. Detection, stated the way an operator would ask for it
+
+The reference paper reports detection as a stability proxy, and our own reporting had been an
+AUROC. Neither answers the operational question, which is "how far, at what false-alarm rate, and
+after how long". `utils/detection_range.py` and `utils/temporal_integration.py` answer it from the
+dumps, with no retraining.
+
+### Range: about 90 m, and it is a data limit before it is a model limit
+
+Threshold fixed on the no-drone frames alone at a chosen false-alarm budget, then recall measured
+per range bin. Test 2 has 3,364 no-drone frames = 5.6 minutes, so **one false alarm is 10.7 per
+hour and nothing finer exists**; the budgets below are integer alarm counts, not round rates.
+
+| Recall at 107 false alarms/h | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m |
+|---|---|---|---|---|---|
+| all 24, K=1 | 30% | 32% | 22% | 6% | 2% |
+| device 3, K=5 | 36% | 28% | 14% | 1% | 1% |
+
+Per-frame recall of 30% reads as a catastrophe and is the wrong unit. Frames arrive at 10 Hz and a
+drone overflies for tens of seconds, so the quantity that matters is the wait for the *first*
+alarm: at 30% per frame that is **0.3 seconds**. Under 90 m every array alarms within about a
+second; beyond 90 m none of them alarm at all. That is the honest statement, and it is one the
+paper never makes.
+
+### Why the far field is unanswerable: the cue is gone, not missed
+
+Using the baseline's absolute beamformed peak energy as the measure (peak-to-mean contrast is at
+or below chance as a detector here — AUROC 0.455 on all 24 — so it would be a proxy for nothing):
+
+| Drone frames quieter than a typical no-drone frame | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m |
+|---|---|---|---|---|---|
+| all 24 | 4% | 36% | 57% | 63% | 67% |
+| device 3 | 2% | 27% | 52% | 65% | 65% |
+
+Two thirds of the labelled positives beyond 90 m are quieter than typical ambient. We train on
+them and score ourselves on them.
+
+**Careful with the word inaudible.** A stricter reading — below the 95th percentile of ambient,
+i.e. uncatchable by an energy threshold that fires on 5% of quiet frames — puts 93% of *all* drone
+frames in that class, and the network still localizes 70% of them within 10°. So the energy
+statistic is what fails, not the frame: there is spatial structure the scalar throws away. Both
+numbers are reported for that reason, and neither is called "inaudible" without qualification.
+
+### An unexpected finding: the near field is our worst region
+
+Scoring localization on the loudest 7% of frames — which are almost all under 30 m — gives 54.9%
+within 10° against 70.1% overall, and the by-range table shows why: 0–30 m is 67%, 30–60 m is 78%.
+Every seed and every array agrees (7.0° median at 0–30 m against 4.5° at 30–60 m). The plausible
+cause is that our steering vectors assume a plane wave, which a source a few metres from a 2 m
+array is not, so the near field breaks the beamformer's own model. Untested, and stated as a
+candidate.
+
+### Integration: time pays for detection even though it did not pay for direction
+
+Sweeping a causal moving average over the presence score, within segments, no retraining:
+
+| all 24, K=1 | window 1 | 3 | 10 | 30 |
+|---|---|---|---|---|
+| decision latency | 0.0 s | 0.2 s | 0.9 s | 2.9 s |
+| AUROC | 0.727 | 0.741 | 0.756 | **0.773** |
+| recall at 1 false alarm | 21.6% | 21.9% | 28.5% | **33.7%** |
+
+Monotone in every seed and every array, +0.03 to +0.05 AUROC at 2.9 s of latency. This is a
+different mechanism from frame stacking and the distinction matters: stacking hands the network
+five raw maps and hopes; integration averages the network's *output*. The presence label is
+constant across a half-second window while the direction label is not, so integration averages
+repeated measurements of a fixed quantity, which is the textbook case where averaging works.
+
+Two limits kept attached to these numbers. Every segment here is homogeneous, so **no window ever
+straddles a drone onset** — a deployed system pays a latency cost exactly there, and this dataset
+cannot measure it. And the sweep stops at 3 s deliberately: pushed far enough the window would
+cover a whole segment and the task would degenerate into telling two recordings apart.
+
+The seed spread also has to be said out loud. The map model's presence head gives AUROC 0.756,
+0.845 and 0.580 on the three all-24 seeds. Integration helps *within* every seed, but the head
+itself is a lottery, which is the strongest argument for the separate per-channel detector.
+
+## 26. How deep does history go, and why the null was not what it looked like
+
+The headline grid compared a K=5 model against a separately trained K=1 model and found nothing,
+which reads as "time does not help". That reading was wrong, and the experiment that shows it
+costs no training at all.
+
+`reorder()` gained a `freeze{j}` intervention: keep the last *j* frames real, fill the earlier
+slots with a copy of the oldest kept frame. `j=1` is the old `freeze` control, `j=K` is unmodified
+`causal`, and in between the *history depth* varies with the weights, the parameter count and the
+input shape all held exactly fixed. Nine existing K=5 checkpoints, five depths each, 36 forward
+passes over test 2.
+
+| History depth | j=1 | j=2 | j=3 | j=4 | j=5 |
+|---|---|---|---|---|---|
+| Within 10° (mean of 9 runs) | 60.4% | 61.8% | 63.2% | 64.1% | **64.7%** |
+| Paired increment | — | +1.49 ± 0.21 | +1.31 ± 0.22 | +0.97 ± 0.20 | +0.53 ± 0.07 |
+
+Increments are paired — the same weights at two depths — so the standard error is over runs and
+every step is significant. **History is worth +4.3 pp**, and the curve is still rising at five
+frames.
+
+### The reconciliation
+
+| Array | K=1 trained | K=5 at j=1 | K=5 at j=5 | Channel cost | History gain |
+|---|---|---|---|---|---|
+| all 24 | 70.5% | 67.5% | 70.1% | −3.0 pp | +2.6 pp |
+| device 3 | 69.3% | 67.6% | 71.1% | −1.6 pp | +3.5 pp |
+| best-6 | 52.1% | 45.9% | 52.8% | −6.2 pp | +6.8 pp |
+
+A K=5 model deprived of history is *worse* than a K=1 model trained to use one frame, because
+five times the input channels is a real cost in optimization and overfitting. The history then
+earns back approximately that cost and no more. So both facts are true at once: **the mechanism
+works, and stacking pays for itself and nothing more.** The correct sentence for the report is not
+"temporal context does not help" but "temporal context buys back what widening the input costs".
+
+Note also that the history gain is largest on the *worst* array (+6.8 pp on best-6), which is the
+first hint of the pattern section 27 confirms.
+
+### Consequence for K=9
+
+The gate condition was "still climbing at j=5", and it is (+0.53 pp, 7 standard errors), so K=9
+runs. But the increments are halving each step, so frames six to nine are worth roughly +1 pp of
+*benefit* — against a channel cost that grows. The curve measures one side of a trade, and a null
+at K=9 would be a statement about the trade rather than about time.
+
+Written before the runs; section 34 has the outcome, which was +2.1 pp rather than +1.0, and the
+depth curve repeated on the K=9 weights then locates the saturation this one could only bound.
+
+## 27. Where temporal context pays: exactly where the evidence is weakest
+
+Frame-paired K=5 minus K=1, joined on (segment, frame) so the between-frame variance drops out.
+K=5 discards the first four frames of each segment, so this runs on the intersection.
+
+| Within 10°, K=5 − K=1 (pp) | overall | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m |
+|---|---|---|---|---|---|---|
+| all 24 | −0.4 ± 2.0 | −3.2 | +0.1 | +1.8 | +3.5 | −0.1 |
+| device 3 | +1.8 ± 1.1 | −0.1 | +3.2 | +3.4 | −1.2 | −3.1 |
+| best-6 | +0.6 ± 0.9 | −4.0 | −2.8 | **+8.4** | +6.2 | **+10.6** |
+
+The pooled nulls were hiding a consistent pattern: context **hurts in the near field** and **helps
+in the mid and far field**, and it helps most on the array with the least spatial information.
+That is what the persistence mechanism predicts — averaging over time is worth most when a single
+frame is ambiguous, and worth nothing when it is already unambiguous, where the extra channels
+only add capacity to overfit. The near-field loss is consistent with section 25's finding that the
+near field is where the plane-wave model is weakest.
+
+Statistical honesty: frames 100 ms apart are strongly autocorrelated, so per-frame disagreement
+counts (16–23% of frames disagree between K=1 and K=5) are descriptive only. The error bars that
+mean anything are over seeds, and that is what the verdict uses.
+
+## 28. Leave-one-scene-out: the detection result we had been overstating, and by how much
+
+Every detection number in sections 18 and 19 trained on the `train` split and tested on `test_2`.
+Listing the segments shows the problem:
+
+    train    Nov_25_2024 pre-takeoff 2.1 min | Mar_18 f1 pre-takeoff 1.3 min | Mar_18 f2 no_drone_1 4.8 min
+    test_2   Mar_18 f2 no_drone_2 4.8 min    | Mar_18 f2 pre-takeoff 0.8 min
+
+`no_drone_1` and `no_drone_2` are **two halves of one continuous recording** of the same field on
+the same afternoon through the same array. Anything learned about that soundscape transfers to its
+own second half for free, so AUROC 0.662 was a within-scene number wearing a generalization label.
+
+Three scenes exist — A = Nov 25 flight 11, B = Mar 18 flight 1, C = Mar 18 flight 2 — so each can
+be held out in turn (`utils/detector_loso.py`). Early stopping monitors interleaved 30-second
+blocks of the *training* scenes; see section 29 for why that detail decided the result.
+
+| Held-out scene | clean, linear | clean, log64 | + confusers, linear | + confusers, log64 |
+|---|---|---|---|---|
+| A = Nov 25 (different session) | 0.441 | 0.538 | 0.347 | 0.482 |
+| B = Mar 18 f1 | 0.551 | 0.412 | 0.768 | 0.758 |
+| C = Mar 18 f2 | 0.472 | 0.582 | 0.662 | 0.715 |
+| **mean** | **0.488** | **0.510** | **0.592** | **0.651** |
+| sd over folds | 0.056 | 0.088 | 0.219 | 0.149 |
+
+Three findings, in order of how much they change the report:
+
+**1. Cross-scene, the detector is at chance.** 0.488 against 0.662 within-scene. Not "weak" —
+*absent*. The honest sentence is that this detector detects the recording, not the drone.
+
+**2. The failure is across sessions, not across flights.** Fold A is the only genuinely
+independent site, and it is at or below chance in all four variants (0.347–0.538). Folds B and C
+share a session, a site and a calibration with their training data, and they reach 0.66–0.77. The
+fold structure was built to expose exactly this difference and it did.
+
+**3. ESC-50 confusers help, and only where anything works at all.** +0.10 clean-to-confusers on
+the linear axis and +0.14 with the log axis, concentrated in folds B and C. Mixing outside sound
+into training teaches "not every loud broadband thing is a drone" — but it cannot teach what a
+different site sounds like, so fold A stays at chance.
+
+For the record, the log-frequency axis of section 31: +0.022 clean and +0.059 with confusers,
+against a fold spread of 0.056–0.219. Inside the noise, so the pre-registered decision applies —
+notes and one limitation sentence, not the method section.
+
+## 29. The monitor split, which changed the answer twice
+
+The first LOSO run early-stopped on the held-out scene, which is selection on the test set. It was
+not a technicality: fold A's held-out AUROC went 0.34, 0.67, 0.72, 0.47, 0.46, 0.80, 0.36 over
+seven consecutive epochs. Taking the best of twelve such draws would have reported ~0.80, and a
+rerun with a fixed epoch budget would not have reproduced it.
+
+Fix one was to monitor the last 20% of each training segment. That was worse than it looks: the
+tail of a flight segment is the far, quiet end of the flight and the tail of a pre-takeoff segment
+is the moment before the motors start, so the split paired the hardest positives against the most
+drone-adjacent negatives. Fold B's monitor AUROC then sat below 0.4 for most of training, which
+says something about the split and nothing about the model.
+
+Fix two, which is what the numbers above use: hold out **interleaved 30-second blocks**, one in
+five, with the held block rotating by segment index so no segment is skipped and no segment
+donates only its tail. Frames 100 ms apart are near-duplicates, so random frame holdout would
+measure memorization; at 30-second blocks only the two frames at each boundary have a neighbour
+across the split.
+
+Even with a clean monitor, checkpoint selection is doing visible work. Scoring the held-out scene
+with the final-epoch weights instead of the selected checkpoint moves fold C from 0.472 to 0.662
+and fold A from 0.441 to 0.252. `metrics.json` now stores both, and the gap belongs in the
+report as the error bar on this protocol.
+
+## 30. DEMAND: the false-alarm rate is a wall, not a number
+
+Ninety minutes, 18 environments, 48 kHz — our own sample rate, so no resampling — single channels,
+which is why the array mismatch does not matter for a detector that reads one microphone at a
+time. Each scene is rescaled so its median in-band frame energy matches our own ambient's, since
+DEMAND's absolute level reflects its own preamp and says nothing about how loud that place would
+be through our array.
+
+The threshold is fixed on **our** drone frames at a stated recall and never touched afterwards.
+
+| Threshold set at | our ambient fires | DEMAND fires | DEMAND alarms/hour |
+|---|---|---|---|
+| 95% drone recall | 93% | 69% | 24,881 |
+| 90% | 85% | 56% | 20,113 |
+| 75% | 60% | 34% | 12,099 |
+| 50% | 25% | 19% | 6,733 |
+
+The plan for this stage was to take the resolvable false-alarm floor from 10.7 per hour down to
+0.7. The floor turned out to be irrelevant: at every usable operating point the detector fires on
+tens of percent of all ambient — 6,733 alarms per hour even at 50% recall, which is roughly two
+per second. There is no threshold at which this is a detector.
+
+Two things the measurement adds beyond that:
+
+- **It is not our recordings.** Our own ambient and 18 unrelated soundscapes give the same answer,
+  so nothing about our field, our microphones or our 5.6 minutes is responsible.
+- **The spread across scenes is small**, 23.8k to 30.8k per hour with the confuser model
+  (median 26.2k, IQR 24.7–29.3k), and outdoor scenes are only slightly worse than indoor. A
+  detector that fires on everything has no interesting variation across environments, which is
+  itself the diagnosis.
+
+Caveat kept attached: level-matching applies +47 to +80 dB of gain to these recordings, so their
+own noise floor is amplified along with the scene. The number is indicative of a saturated
+detector, not a calibrated deployment figure.
+
+## 31. Why a log-frequency axis should have helped, and the honest null
+
+A multirotor's sound is a harmonic comb: the blade-pass frequency (rotor RPM over 60, times blade
+count — a few hundred hertz for an Air 3) with energy at every integer multiple through our band.
+
+The comb moves with throttle. Ten percent more RPM scales every peak by 1.1, which on a linear
+frequency axis is a *different* shift in hertz for each harmonic — the tenth moves ten times as
+far as the first. The comb stretches rather than slides. Convolution is invariant to sliding, not
+to stretching, so a linear-axis network has to learn the low-RPM comb, the mid-RPM comb and the
+high-RPM comb as separate patterns, spending parameters and examples on what is physically one
+pattern in different states.
+
+On a log axis multiplication becomes addition: at position `log f`, scaling frequency by any
+factor translates every peak by the same distance. The comb slides rigidly, its shape is
+independent of RPM, and one template covers every throttle setting. Nothing is added to the
+model — a variation it currently has to memorize is removed, which is the right kind of change
+when the ceiling is data rather than capacity.
+
+Implementation is one fixed matrix multiply: a triangular filterbank, mel-style but log-warped,
+applied to the magnitude spectrum before the convolutions. Pooling happens on linear magnitude
+before the decibel conversion, because summing energy and then taking the logarithm is what a
+filter does; taking the logarithm first would average decibels, a geometric mean in which one
+dead bin drags a whole band down. No audio re-read and no cache rebuild.
+
+Bin count is set by a real constraint rather than a guess. The cache holds 381 linear bins at
+10 Hz spacing, and at the bottom of the band 10 Hz is 5% of 200 Hz, so log bins narrower than
+about 5% would interpolate rather than measure. Over 200–4000 Hz that caps us near 64 bins, which
+is a bonus: the input shrinks from 381 to 64 and the model gets smaller and faster.
+
+**Result: null.** Under the section 28 protocol, +0.022 AUROC clean and +0.059 with confusers,
+against a fold spread of 0.056 to 0.219. The pre-registered reading applies — if the detector is
+keying on broadband energy rather than comb structure, the axis cannot matter, and everything
+else in sections 28 and 30 says that is exactly what it is doing. The argument is recorded here
+because it is sound and because the null is informative about what the model learned; it earns
+one sentence in the report's limitations and no place in the method.
+
+## 32. The polar disc: the right hypothesis, and it was wrong
+
+This was the one ablation aimed at a failure we had already localized. Beyond 100 m our error is
+almost entirely azimuth — 53 degrees against 11 in elevation — and azimuth is the axis a
+rectangular elevation-by-azimuth map distorts. That map is a plate carree projection of the sky:
+near the zenith one azimuth cell covers almost no solid angle, so a single 3x3 kernel means
+different things at different elevations. Circular padding fixed the seam at 0/360 degrees years
+of literature ago; nothing fixed the pole.
+
+The disc puts the zenith at the centre and the horizon on the rim, which is what a fisheye lens
+does. A kernel then means the same thing everywhere, and azimuth resolution is *highest* at the
+rim — exactly where a distant, low-elevation drone sits. So the hypothesis was specific and the
+prediction was directional.
+
+Implementation as a preprocessing flag rather than a code fork, per notes section 7: one
+precomputed `(46, 46, 2)` sampling grid and an `F.grid_sample` for the input, the same remap
+applied to the target mask so input and target cannot drift apart, and a centroid decoded in disc
+coordinates and inverted analytically back to azimuth and elevation. `wrap=False` on the
+convolutions, since the disc has no seam to wrap.
+
+Two gate failures worth recording, both caught before any accuracy number was read:
+
+- **Dead corners were not dead.** The disc is inscribed in a square, so 21.5% of the tensor is
+  outside the sky and must be exactly zero. `grid_sample` with `padding_mode="zeros"` still
+  produces small non-zero values just outside the rim by bilinear interpolation against real
+  samples, so the output is now multiplied by the validity mask explicitly.
+- **The round-trip test was too weak.** It used a flat cap as the target, which decodes to the
+  right centroid even under a badly wrong remap. Replaced with a Gaussian-like beam, so the test
+  is sensitive to the peak's *location* rather than to the blob's symmetry.
+
+A third bug survived the gates and was caught only because the first three runs crashed: the
+training loop was feeding rectangular maps against polar targets, because `to_maps()` was called
+with the projection in the evaluation path and without it in the training path. The crash was a
+shape mismatch in the loss, which is the good kind of bug — it cannot be mistaken for a result.
+
+**Result, all24 at K=1, three seeds each, mean over seeds:**
+
+| Mean error (deg) | 0–50 m | 50–100 m | 100–200 m | within 10 deg |
+|---|---|---|---|---|
+| rectangular | 11.2 | 19.8 | 57.0 ± 16.0 | 70.1% ± 3.6 |
+| polar disc | 12.1 | 22.0 | 82.4 ± 12.9 | 71.0% ± 1.8 |
+
+Azimuth error, the quantity the stage was run to move. No overall change (71.0 against 70.1,
+inside the seed spread) and the far bin is 25 degrees *worse* against a 16-degree spread — inside
+two standard deviations, so formally a null, but with no hint of the predicted gain. The
+projection was not what the far-field failure was.
+
+In hindsight the answer was already in section 25: beyond 90 m two thirds of the labelled drone
+frames are quieter than a typical no-drone frame. No projection recovers a cue that is not in the
+audio, and a resampling that costs 21.5% of the tensor to dead corners has to pay for itself out
+of something. Per the plan, polar does not go on to `device3` and does not go into test 1.
+
+## 33. Sub-band count: a documented guess becomes a documented insensitivity
+
+Sixteen sub-bands over 200-2200 Hz was our reconstruction of a detail the paper does not specify
+(notes section 16). Three runs on `device3` at K=1 settle what that guess cost:
+
+| Sub-bands | 8 | 16 | 32 |
+|---|---|---|---|
+| Within 10 deg | 69.5% | 70.0% | 69.9% |
+| Median angular error | 5.54 deg | 5.68 deg | 5.32 deg |
+
+A 0.5 pp spread against a 1.2 pp seed spread: the choice does not matter, which is the useful
+outcome. It means the reconstruction is not load-bearing, and it also says something about the
+representation — if eight bands carry as much as thirty-two, the network is using the
+*consistency* of a direction across the spectrum rather than fine spectral detail, which is the
+same conclusion the order-invariance result reached from the time axis.
+
+One asymmetry worth noting: the presence head's AUROC on these same three runs is 0.775, 0.562
+and 0.734. Localization is insensitive to the band count and detection swings by 0.2, which is
+the presence head being a lottery again rather than the band count mattering.
+
+## 34. K=9: the gate made a prediction, and the prediction was too pessimistic
+
+Stage A4 existed to decide whether K=9 was worth four hours of compute. It measured the benefit of
+history at a *fixed* input width — the same trained K=5 weights evaluated at depths 1 to 5 — found
++4.3 pp still climbing at j=5, and extrapolated the decelerating increments to roughly +1.0 pp for
+frames six to nine. That was the justification: not "more is better", but a slope we had measured.
+
+**Trained result, `device3`, three seeds:**
+
+| Cell | K=1 | K=5 | K=9 |
+|---|---|---|---|
+| Within 10 deg | 69.3% ± 0.7 | 71.1% ± 1.8 | **73.2% ± 1.4** |
+
++2.1 pp over K=5 and +3.9 over K=1, against our ±1.2 pp yardstick, and monotone in K. Two things
+follow that we did not have before:
+
+- **Temporal context does help localization**, on this array, at this range distribution. The
+  headline grid's null at K=5 was a net of two opposing effects (notes 26), and nine frames is where
+  the history term finally outruns the channel term.
+- **A cheap recorder with 0.9 s of history beats 24 synchronized microphones with one frame**
+  (73.2% against 70.5%). We never trained all24 at K=9, so this is *not* "six microphones beat
+  twenty-four"; it is "0.9 s of latency substitutes for 18 microphones", which is the trade a
+  deployment actually faces, since one is a hardware cost and the other is a delay.
+
+**And now the curve terminates.** Repeating the A4 intervention on the K=9 checkpoints, depths 1 to
+9, gives eight consecutive significant increments and then nothing: +1.12, +0.79, +0.89, +0.72,
++0.47, +0.42, +0.26 and finally +0.19 ± 0.11 pp from j=8 to j=9, the first step inside noise.
+History saturates at about 0.8 s, which is now *measured* rather than assumed — the thing A4 could
+only bound from below. There is no K=13 to run: the last frame we added was already free of
+information, and the answer would be a statement about channel cost rather than about time.
+
+The physical reading is consistent with notes 20. The usable cue is persistence, not motion — a
+drone stays put while sidelobes flicker — and averaging persistence over *n* frames improves as the
+square root of *n*, so 1 to 9 is a factor of 3 and the increments must decelerate exactly as they
+do. What the curve adds is where the useful window ends, and 0.8 s is a number a deployment can
+budget for.
+
+## 35. Test 1, scored once: what a sealed split actually bought us
+
+Three minutes, 1,592 drone frames, a different site and date with its own array calibration, held
+out since the first commit. `utils/unseal_test1.py` scores it from existing checkpoints, writes
+`results/test_1.json`, and refuses to overwrite that file without `--force`. It also **gates what
+gets scored**: `polar_won()` and `k9_won()` re-read the test-2 comparisons and admit a variant only
+if it beat its counterpart by more than the larger seed spread. Polar failed the gate and was never
+scored on test 1; K=9 passed and was. Without that, "score everything we built" quietly becomes a
+search over test 1.
+
+**What it said.** Every U-Net cell lost 15 to 18 points against its test-2 figure and the seed
+spread went from ±1.2 pp to ±5–8 pp, so no cell here separates from another. Three results survive
+that noise:
+
+| Test 1 | within 10° | 0–30 m | 60–90 m | 90–120 m | 120–180 m |
+|---|---|---|---|---|---|
+| DAS, 24 mics | 63.9% | 5.9 | 3.7 | 36.3 | 58.7 |
+| U-Net all24 K=1 | 52.2% ± 5.5 | 13.3 | 5.6 | 5.6 | 40.5 |
+| U-Net device3 K=5 | 56.7% ± 7.6 | 15.1 | 6.6 | 5.3 | 27.2 |
+| U-Net device3 K=9 | 52.0% ± 3.2 | 20.4 | 6.5 | 6.6 | 21.2 |
+
+1. **The headline claim replicates.** `device3` ≥ `all24` at both K, on hardware costing a quarter as
+   much, at a site neither model had seen. This is the one number here we would defend.
+2. **The classical baseline wins the pooled comparison**, which our test-2 numbers gave no reason to
+   expect: DAS is *better* at this site than at ours inside 90 m (5.9° and 3.7°, against a
+   training-site baseline that degrades 8.6× over the same span) while still collapsing past it.
+   Two thirds of test 1 sits inside 90 m, so the pooled number goes to DAS. Our model keeps its
+   advantage exactly where it always had one — flat at 5–6° out to 120 m, where DAS reads 36°.
+3. **The range-conditioned prediction from test 2 held in shape.** Notes 27 said deep history helps
+   where evidence is weakest and costs something up close. Comparing within `device3`, so the array
+   is held fixed: K=9 has that array's best 120–180 m error (21.2° against 25.0° at K=1) and its
+   worst 0–30 m error (20.4° against 14.8°). Sixty-seven frames in the far bin make this suggestive
+   rather than significant, and K=5 sits above K=1 there (27.2°), so the ordering is not monotone —
+   but the sign of the trade is the one the frame-paired analysis predicted, which is a stronger
+   check than matching a pooled mean.
+
+**What we would do differently.** The near field is now our clearest open problem: worst on test 2,
+worst on test 1, and the thing that fails to transfer. It is also the most geometry-sensitive regime
+— a source metres from a 2 m array violates the plane-wave steering assumption — and this session
+carries its own calibration, so the two suspects are confounded and neither is testable without
+another site. The honest position is that we named the weakness before unsealing, and the sealed
+split agreed with us about it.
+
+One protocol note for whoever comes next: the detector's 0.639 AUROC here is *not* reassurance after
+the leave-one-scene-out collapse (notes 28). Test 1's negatives are one minute from one scene, which
+is the same single-soundscape flaw at a smaller sample size. A detector cannot be validated on this
+dataset at all, and that limitation is a property of the data rather than of the model.
+
+## 36. The polar disc, steered natively: withdrawing a null that was our own interpolation
+
+Notes 32 recorded the disc as a well-motivated hypothesis that measured out flat, and closed with
+the reading that the far field has no cue to recover. That conclusion was premature, and the reason
+is worth more than the result.
+
+**What the first implementation actually did.** `polar.Projection` builds the disc *from the
+finished rectangular map*, with `F.grid_sample`. So its input is a bilinear interpolation of cells
+4° apart in azimuth, painted onto cells 2.5° apart at the rim, while the training target is a hard
+10° cap rasterized at full disc precision. The input was smoothed on the way in and the target was
+not. A distant drone is a low-contrast peak, which is exactly what smoothing costs the most, and the
+far bin is where the resampled disc lost worst: 82.4° of mean azimuth error against the rectangle's
+57.0°. We had measured our own interpolation and written it down as a fact about polar geometry.
+
+**The fix is not a better resampler, it is no resampler.** `cell_directions` already returns one
+unit vector per disc cell and `beamform.Beamformer` already accepts an arbitrary direction set, so
+`polar.NativeDisc` hands the beamformer the disc's own cells and gets an (n, n) image back directly.
+Cost is unchanged — 2,116 disc directions against the rectangle's 2,093 — which is the part that
+makes this a fair comparison rather than a bigger model.
+
+Three things had to be fixed alongside it, all of them silent failures:
+
+- **The beamformer memo key ignored the direction set.** `beamform.get` was keyed on session,
+  channels, sub-bands, band and device. A disc run therefore got handed back the *rectangular*
+  steering tensor built earlier for the same session — same shape family, wrong directions, trains
+  happily. The key now includes a hash of the direction array.
+- **Normalization statistics included the dead corners.** The disc inscribes a circle in a square,
+  so 21.5% of cells describe no direction and carry the zenith as a placeholder. Left in, one real
+  direction's energy contributes a fifth of the mean and standard deviation. `data.input_stats` now
+  takes the validity mask.
+- **`argmax` decoding could answer "straight up".** Same placeholder, same cause: an unmasked argmax
+  can pick a dead corner. The target is zero there and a trained model learns to keep them dark, but
+  nothing enforced it. `models.decode_mask` now fills invalid cells with −1 before the argmax.
+
+**Gate first, then compute.** `utils/check_polar.py` steers a synthetic plane wave at known
+directions and checks that the peak lands where the analytic answer says. It also measures the
+mechanism the whole retest rests on: native steering gives a peak prominence **+1.28 sd** higher on
+average and **+2.75 sd** at 8° elevation, the lowest probed and where a distant drone sits. Four
+hours of training should not assume a mechanism that seconds of arithmetic can check.
+
+**Result, all24 K=1, three seeds, mean azimuth error in the 100–200 m bin:**
+
+| Cell | Far-bin azimuth | Pooled within 10° |
+|---|---|---|
+| rectangle + weighted CE (baseline) | 57.0° ± 16.0 | 70.1% |
+| resampled disc + weighted CE | 82.4° ± 12.9 | 71.0% |
+| rectangle + Tversky | 66.4° | 63.5% |
+| native disc + weighted CE | **48.3°** ± 9.3 | 69.5% |
+| native disc + Tversky | **45.9°** ± 15.0 | 67.9% |
+
+So the sign reverses: natively steered, the disc beats the rectangle by 8.7° and beats its own
+resampled version by 34°. Adding the reference paper's Tversky loss takes another 2.4°.
+
+**And we still do not claim it works.** Gate 1 asked for a seed mean at or below 45.0° *and* every
+seed below the baseline's 57.0°. The best cell reaches 45.9° and its worst seed reads 59.5°, so no
+cell passes. More importantly, this bin contains about 2.5% of drone frames arriving as **two
+continuous crossings** of the range band. Frames within a crossing are not independent evidence —
+the drone is at one place, doing one thing — so the honest unit is the crossing, the honest test is
+a sign test over two units, and its smallest possible two-sided p-value is 0.5. Across seeds the
+permutation p is 0.43–0.50. Everything about the point estimate says the disc helps in the far
+field; nothing about the evidence establishes it. Tversky separately costs 6.6 pp of pooled hit
+rate, so it is a far-field-only trade even if it is real.
+
+**The lesson we would actually keep is procedural.** A null result is only as good as the
+implementation underneath it, and ours was measuring a design decision we had not noticed making.
+The tell was available before the retest: the resampled disc was *worse* than the rectangle in the
+far bin, and a projection that only relabels directions should not be able to lose. When an ablation
+that should be neutral comes out negative, suspect the plumbing before writing the conclusion.
+
+## 37. `all24` at K=9: the null that sharpens the claim
+
+Notes 34 had to hedge. `device3` at K=9 reached 73.2% against all24's 70.5% at K=1, and since all24
+had never been trained at K=9 the comparison confounded array size with history depth. The obvious
+objection — "give the full array the same nine frames and it will pull ahead again" — was untested
+and we said so. This is that run: three seeds, four hours, no other change.
+
+| Array | Mics | Recorders | K=1 | K=5 | K=9 | K=9 − K=1 |
+|---|---|---|---|---|---|---|
+| all 24 | 24 | 4 | 70.5% ± 1.5 | 70.1% ± 0.9 | 70.1% ± 2.7 | −0.4 |
+| device 3 | 6 | 1 | 69.3% ± 0.7 | 71.1% ± 1.8 | **73.2% ± 1.4** | **+3.9** |
+
+**Nothing.** Nine frames buy the full array 0.4 pp less than one frame, inside a ±2.7 pp seed
+spread, after buying the cheap array 3.9 pp. The pre-registration (`docs/prereg_test1.md`,
+prediction 7) gave 80% confidence that all24 K=9 would beat all24 K=5, on the grounds that history
+had helped on every array measured. It was wrong, and this is the most useful thing the run produced.
+
+The claim that comes out is narrower than "six microphones beat twenty-four" and stronger than the
+hedge it replaces: **depth substitutes for microphones and adds nothing on top of them.** Nine
+frames of one cheap recorder beat 24 synchronized microphones fed the same nine frames by 3.1 pp.
+With three seeds each that cross-array gap is not separable (Welch p = 0.18), so the defensible
+statement is the within-array one, and it is the trade a deployment faces: 0.9 s of latency or 18
+more microphones, not both.
+
+Why would extra microphones and extra frames not add up? Both are doing the same job. Notes 22 found
+that all 24 is not 24 microphones' worth of information — one recorder is coplanar and its closest
+pair is half a wavelength apart at 1 kHz, so the map is spatially aliased and phantom peaks appear.
+Notes 20 found that history removes phantoms by persistence: the drone stays put while sidelobes
+flicker. Twenty-four microphones suppress phantoms spatially; nine frames suppress them temporally.
+Once either has done it, the other has nothing left to remove. That is also why the gain lands at
+long range in both cases (notes 41), where contrast is lowest and phantoms compete hardest.
+
+## 38. Training the detector on real ambient: it learns soundscapes, not drones
+
+Notes 30 left an obvious objection standing. Our detector fires on 60% of DEMAND frames because it
+had never *heard* real ambient — three scenes from one field, 8.2 minutes. Show it 90 minutes of
+kitchens, cafés, buses and traffic and the false-alarm rate should collapse. That objection deserved
+a measurement rather than a paragraph.
+
+**Protocol.** `utils/demand_trained.py` runs six folds, each holding out one of DEMAND's six scene
+*groups* — domestic, nature, office, public, street, transport. Group-level, not scene-level:
+scenes within a group share an environment, so holding out one scene from a group whose others are
+in training answers a much easier question. Ambient frames are mixed in as negatives at 30% of each
+batch, level-matched to the median in-band energy of our own *training* no-drone frames.
+
+That level-matching reference has to come from the training split, and getting it right took a
+second attempt. `utils/demand_false_alarms.py` takes the same statistic from test 2, which is
+correct for an evaluation that must report in the units its threshold lives in, and is a leak here.
+The first implementation also sampled it from training batches, which are bucketed by segment — the
+first several hundred are all from the first flight and contain no negatives at all — so the
+reference silently depended on the shuffle seed. It now reads the labelled frames directly.
+
+**Result:**
+
+| | False alarms/h at 95% recall | Cut against the 24,881/h baseline |
+|---|---|---|
+| groups it trained on (median) | 5,530 | 4.5× |
+| the held-out group (median) | 10,384 | 2.4× |
+
+Real ambient helps, and it helps roughly twice as much where it has already been. The gate asked for
+a held-out median below 5,000/h with no more than 0.02 AUROC lost; it fails on both counts, the
+worst fold dropping 0.030. Even the groups it trained on stay above the bar, which says the
+per-channel spectrum does not have the capacity to fit 75 minutes of ambient *and* keep the drone
+separable — the ceiling is partly the representation, not only the negative class.
+
+The shape of the failure is the finding, and it is the third independent measurement of the same
+thing: **it learns specific soundscapes rather than what a drone is not.** Leave-one-scene-out found
+it across our own flights (notes 28), DEMAND found it across environments here, and notes 39 finds
+it again along a completely different axis. More ambient of the same kind narrows the gap without
+closing it. What would close it is ambient from many *places*, which is a microphone and an
+afternoon in ten fields, not a bigger model.
+
+## 39. The detector with temporal context: two columns moving in opposite directions
+
+The one intervention that produced a solid positive result in this project is temporal context for
+localization (notes 26, 34, 41). The detector had never been given it — every detector run in the
+report reads a single frame — so this is the same idea applied to the problem that is failing, with
+K frames of one microphone's spectrum stacked on the channel axis and everything else fixed. Three
+depths, three seeds each.
+
+| Detector | AUROC, our site | Rejects at 95% recall | DEMAND alarms/h |
+|---|---|---|---|
+| K=1 | 0.691 ± 0.030 | 11 ± 5% | 21,591 ± 5,532 |
+| K=5 | 0.752 ± 0.017 | 12 ± 2% | 27,088 ± 6,034 |
+| K=9 | **0.785 ± 0.053** | **19 ± 3%** | 28,991 ± 4,103 |
+
+AUROC on our own site rises monotonically and by a lot — +0.094 from K=1 to K=9, where the whole
+detector only clears chance by 0.19 — and the rejection rate at the operating point nearly doubles.
+On ambient it has never heard, false alarms get **worse**, monotonically, by 34%. Neither column's
+difference clears Holm correction (raw Welch p = 0.05 and 0.07 for AUROC, 0.31 and 0.14 for the
+false-alarm rate), so the honest reading is not "context hurts". It is that context buys real
+sharpness *at the site it trained on* and none of it transports.
+
+Two consequences worth recording. First, the K=1 false-alarm baseline in the report changed because
+of this experiment: it is now the three-seed mean of 21,591 ± 5,532 rather than seed 0's 24,881,
+since a claim about a rate should carry a rate's spread. Second, this closes the last plausible
+"we just did not try hard enough" objection to the detection result. Capacity was not the limit
+(86k parameters tie a 7.9 M map head, notes 19), negatives were not the limit (notes 38), and time
+is not the limit either. Three scenes cannot teach what "not a drone" sounds like anywhere else, and
+every direction we push from inside that constraint reports the same thing.
+
+## 40. Significance, done properly: clusters, not frames
+
+The report quotes intervals and p-values, and until this pass they were computed as if frames were
+independent observations. They are not, in two different ways, and both inflate confidence.
+
+`utils/significance.py` handles them separately:
+
+- **Within one set of weights**, comparing an intervention against its own baseline on the same
+  frames, the unit of evidence is a stretch of flight rather than a frame. Frames are 100 ms apart
+  and a drone crosses a range bin in one continuous pass, so we resample contiguous **blocks**.
+  On the pooled history intervention the measured **design effect is 3.48** — the naive standard
+  error of 0.237 pp against a block-resampled 0.827 — meaning every frame-level interval we had
+  written was about 3.5× too narrow. The estimate itself does not move, only its honesty.
+- **Across separately trained runs**, the unit is the seed, and there are three. Welch's t-test and
+  an exact permutation test are both reported. The permutation test is the more honest of the two
+  and it has a floor: with three against three there are only 20 distinct arrangements, so **no
+  three-seed comparison can produce a p below 0.10** regardless of effect size. Where the report
+  compares arms, it says this rather than quoting a t-test as though it were stronger.
+
+**A bootstrap cannot rescue a small number of clusters.** Our first version block-resampled the
+far-bin claims and returned p = 0.0001 from five crossings, which is nonsense: with *n* clusters a
+resampling p-value cannot honestly go below 1/*n*, and the interval is being driven by which of five
+things got picked. Below `MIN_UNITS = 12` the script now reports an **exact sign test over
+clusters** and marks the bootstrap p as unreliable. The far-bin history gain, five crossings all
+agreeing in sign, therefore reads p = 0.0625 — the smallest a five-unit sign test can give — instead
+of 0.0001.
+
+**All fourteen claims, corrected together with Holm-Bonferroni:**
+
+| Claim | raw p | Holm |
+|---|---|---|
+| `device3` K=9 history, pooled | 0.00005 | **0.0007** |
+| `all24` K=5 history, pooled | 0.00005 | **0.0007** |
+| history's far gain exceeds its near gain | 0.018 | 0.21 |
+| `device3` K=9 against K=1 across seeds | 0.026 | 0.28 |
+| detector K=5 AUROC against K=1 | 0.051 | 0.51 |
+| `device3` K=9 history beyond 90 m | 0.063 | 0.56 |
+| detector K=9 AUROC against K=1 | 0.070 | 0.56 |
+| the four polar far-bin comparisons | 0.43–0.50 | 1.0 |
+| the two detector false-alarm comparisons | 0.14, 0.31 | 1.0 |
+| `all24` K=9 against K=1 across seeds | 0.84 | 1.0 |
+
+**Two survive, and both are the same intervention**: deleting history from trained weights, measured
+on those weights. Everything else in the report is a point estimate, and the report now says so in
+the words "point estimate" rather than by omission. This did cost us claims — the far-versus-near
+contrast at Holm 0.21 is the most interesting casualty, and the trained K=9-against-K=1 comparison
+at 0.28 is the one a reader would most expect to be significant — but the alternative is fourteen
+uncorrected tests and a 51% chance that at least one of them reads significant by luck alone.
+
+**Addendum: an interval on every headline cell.** Section 6 of `utils/significance.py` now puts an
+interval on each cell of the headline table (`cell_ci` in `results/significance.json`), scored
+grid-snapped as the table is, and gated on reproducing every run's `metrics.json` hit rate. The
+frame component is a block bootstrap of the seed-averaged hit indicator; the seed component is the
+seed standard error; the combined interval adds them in quadrature.
+
+| Cell | Within 10° | Combined 95% interval | Frame half-width, 3 / 10 / 30 s blocks | Seed sd |
+|---|---|---|---|---|
+| `all24` K=1 | 70.5% | 64.8–76.1 | 3.3 / 5.4 / 7.5 | 1.5 |
+| `all24` K=5 | 70.1% | 64.6–75.7 | 3.5 / 5.5 / 7.3 | 0.9 |
+| `device3` K=1 | 69.3% | 63.7–74.9 | 3.4 / 5.5 / 7.7 | 0.7 |
+| `device3` K=5 | 71.1% | 65.4–76.8 | 3.3 / 5.3 / 7.2 | 1.8 |
+| `device3` K=9 | 73.2% | 67.8–78.6 | 3.3 / 5.1 / 7.0 | 1.4 |
+| `best6` K=1 | 52.1% | 46.5–57.7 | 3.4 / 5.5 / 7.3 | 0.8 |
+| `best6` K=5 | 52.8% | 46.8–58.7 | 3.6 / 5.7 / 7.3 | 1.2 |
+
+(`all24` K=9 has trained runs but no committed per-frame dump, so it waits for the cache.)
+
+Three readings. The frame term dominates the seed term by three to four times, so more seeds
+would not narrow these intervals; more flights would. The half-width keeps growing with block
+length and has not levelled off at 30 s, so the ±5.5 pp at 10 s blocks is a *floor* on the
+uncertainty, not a generous estimate — test 2 is one afternoon of one flight, and its frames are
+correlated on the scale of whole manoeuvres. And every `all24` and `device3` cell sits inside
+every other's interval: the table separates `best6` from the rest and nothing else. Differences
+between the other cells are claims only through the paired designs above, which cancel the shared
+frame difficulty, never by reading two rows of the table against each other.
+
+## 41. Where the temporal-context gain lands, by range
+
+Notes 27 established *that* history pays where evidence is weakest, using frame-paired deltas
+between separately trained K=5 and K=1 models. That comparison carries the channel-cost confound
+(notes 26). Repeating it as a within-weights intervention removes the confound entirely:
+`utils/history_by_range.py` re-scores existing dumps at each history depth and splits the gain by
+distance bin. No training, no GPU, no dataset.
+
+**Gain in points of hit rate from shallowest to deepest history, by range:**
+
+| Cell | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m | pooled |
+|---|---|---|---|---|---|---|
+| `device3` K=9 (1→9 frames) | +0.5 | +4.4 | +8.7 | **+21.8** | +3.0 | +5.1 |
+| `device3` K=5 (1→5) | −0.2 | +2.3 | +6.2 | +8.3 | +4.5 | +2.9 |
+| `all24` K=5 (1→5) | −1.1 | +3.5 | +5.7 | +3.9 | +1.5 | +2.6 |
+| `best6` K=5 (1→5) | +2.2 | +6.8 | +11.0 | +11.4 | +8.4 | +6.7 |
+| frames in bin | 4,003 | 3,790 | 3,268 | 612 | 246 | 11,919 |
+
+Three readings, in decreasing order of how much we would defend them:
+
+1. **The gain grows with range out to 120 m, in every cell.** Monotone across four bins and four
+   independent cells, and at 90–120 m the deepest cell climbs monotonically in depth as well:
+   50.8% at one frame, then 54.8, 58.4, 63.1, 65.4, 68.7, 70.7, 72.3 and 72.5% at nine. That is
+   temporal integration buying signal-to-noise on faint targets, which is the mechanism notes 20
+   predicted from the order-invariance — persistence averages, phantoms do not.
+2. **Near-field history is worthless or negative**, and it gets more negative the more microphones
+   there are: −1.1 pp for all 24, −0.2 for `device3`, +2.2 for `best6`. Where one frame already
+   resolves the direction, the extra channels are cost without return. This is the same trade as
+   notes 37 seen from the other side.
+3. **The 120–180 m bin falls back**, to +3.0 pp. With 246 frames it is the noisiest column here, but
+   the direction agrees with notes 25: past about 90 m two thirds of labelled positives are quieter
+   than a typical ambient frame, so there is nothing for integration to integrate. Interestingly the
+   *azimuth* error still improves there (by 15.4°, the largest of any bin), which is consistent with
+   history pulling estimates toward the right general bearing without getting them inside 10°.
+
+The practical form of this: history is worth latency precisely when the target is far, which is also
+when a detection system has time to spend. Inside 30 m a drone is loud, one frame is enough, and the
+0.9 s should be skipped.
+
+## 42. The disc at K=9: the two far-field mechanisms do not compound
+
+The last untested combination, and the third time this project bet on a result transferring.
+
+Two things buy far-field accuracy for reasons that sound independent. The natively steered disc
+stops smearing a low-contrast peak across cells (notes 36), worth 8.7° of far-bin azimuth error at
+`all24` K=1. Nine frames of history suppress phantoms by persistence (notes 41), worth +21.8 pp of
+hit rate at 90–120 m. Whether they add was unknown, so: `device3`, K=9, native disc, weighted
+cross-entropy, three seeds, 224 minutes. Predictions registered first, in `docs/prereg_test1.md`.
+
+Mean azimuth error by the paper's bins, three seeds, and the frame-paired delta between the two
+arms with the range crossing as the unit of evidence. `utils/compare_polar.py` prints all of it and
+writes `results/polar_k9.json`.
+
+| `device3` K=9 | 0-50 m | 50-100 m | 100-200 m | Pooled within 10° |
+|---|---|---|---|---|
+| rectangular | 11.4° | 21.9° | 56.5° | 74.0% |
+| native disc | 10.5° | 19.4° | 62.7° | 73.5% |
+| paired delta | −0.94° | −2.58° | **+6.20°** | −0.5 pp |
+| crossings agreeing | 6/10 | 9/11 | 2/2 | — |
+| sign test | p 0.75 | p 0.065 | p 0.50 (floor) | — |
+
+**The far-field hypothesis fails: they do not compound.** The one bin the disc was built to fix
+moves the *wrong* way by 6.2°, where the same layout change bought 8.7° at `all24` K=1. Pooled
+accuracy is unchanged, exactly as predicted, and nothing here clears 0.05, also as predicted — with
+two crossings the far bin's sign test cannot go below 0.50, so +6.2° is a point estimate and no more.
+
+The reading that fits it: **both mechanisms attack the same failure.** A distant drone is a
+low-contrast peak competing with phantoms. History removes phantoms temporally, the disc sharpens
+the peak spatially, and whichever runs first takes what is available. Once nine frames have done it
+the disc contributes mainly its own costs, of which it has two: 21.5% of its cells carry no
+direction at all, and near the centre of the disc — which is high elevation, so the near field — its
+azimuth sampling is coarser than the rectangle's. This is the same shape as notes 37, where 24
+microphones and nine frames also failed to add, and for the same underlying reason.
+
+**Two things here are more interesting than the headline, and neither is a result.** First, the
+disc's advantage appears to *move* rather than vanish: it is better in both bins holding 97% of the
+frames and worse only in the sparse one. The 50-100 m delta of −2.6° with 9 of 11 crossings agreeing
+(p = 0.065) is the most suggestive number the run produced, and it points at the disc's original
+motivation — the rectangle's zenith distortion — paying off at high elevation rather than at long
+range. That deserves one experiment from whoever picks this up; it is not a claim we make.
+
+Second, the rectangular baseline's far-bin seed spread is enormous — 93.2°, 32.8°, 43.5°, a standard
+deviation of 32° — while the disc's three land within 7° of each other. So "the rectangle wins the far
+bin" partly means "the rectangle drew a lucky seed", and the disc is much the more reproducible of
+the two. In a bin this sparse neither layout is reliably better. Nothing in the report rests on
+either observation.
+
+**This comparison is also the clearest illustration in the project of why notes 40 exists.** The
+0-50 m delta is −0.94° with a frame-level standard error of 0.19° off 6,398 frames, which reads like
+a five-sigma result. Clustered by crossing, 6 of its 10 crossings agree on the sign and the sign
+test returns p = 0.75. Same data, same direction, and the honest version is indistinguishable from
+noise. A frame-level interval on this dataset is about 3.5× too narrow in general (notes 40) and, on
+a range-restricted subset like this one, can be far worse than that.
+
+**A provenance note this run forced us to pin down.** Two numbers in the report both called "within
+10°" are computed from different decodes, and the difference is about 0.5 to 0.9 pp:
+
+- `runs/*/metrics.json`, and therefore the headline table, scores the direction **snapped to the
+  grid** — `metrics.summarize` reads `el_idx` and `az_idx`, so the answer is a cell centre, 4° apart
+  in azimuth. `utils/predict.verify` reproduces this to 1e-6, which is why the gate passes.
+- `utils/compare_polar.py`, and therefore every layout comparison, uses the **continuous centroid**
+  in `pred_az` and `pred_el`.
+
+Both are defensible and each table is internally consistent, but the layout comparison *must* use
+the continuous decode: grid-snapping charges the rectangle for its 4° azimuth spacing and credits
+the disc for its 2.5° rim, which is a difference in rasterization rather than in what the model
+learned. Anyone extending this should keep one decode per table and say which.
+
+## 43. Detection as a confusion matrix: at 95% recall, everything fires on almost everything
+
+Every detection number so far has been an AUROC or a specificity, which answer "how separable" but
+not "what would an operator see". `utils/confusion.py` states it as counts at one operating point:
+the threshold that keeps 95% of drone frames, the recall a warning system would actually be run at.
+It writes `results/confusion.json`.
+
+Map-model presence heads are counted directly from the dumps in `results/preds/`. The per-channel
+detector has no per-frame dump, so its tables are rebuilt from the committed summaries: TP and FN
+follow from the recall, TN and FP from the stored specificity and the split's drone-frame count.
+Test 2, test 1 and fold C (which holds test 2's drone segment) have known counts. Folds A and B do
+not, so theirs is bounded from every best-F1 point that sits at recall 1.0, where precision × n can
+only overestimate the positives; on test 2 that bound is off by 0 to 2 frames. Every table
+reproduces its stored specificity (to one frame, plus that tolerance on A and B), which is the gate.
+
+| At 95% recall | Fires on no-drone frames | Precision |
+|---|---|---|
+| Map models, test 2 (7 cells, 3 seeds each) | 84.4–96.1% | 0.78–0.80 |
+| Map models, test 1 (5 cells) | 72.1–96.4% | 0.72–0.78 |
+| Detector, test 2 (within scene) | 89.1% | 0.79 |
+| Detector, LOSO, four variants (fold mean) | 86.2–93.9% | 0.85 |
+| Detector, test 1 | 94.5% | 0.72 |
+
+**Read as an operator would: at the recall anyone would deploy, no model here rejects more than a
+quarter of empty-sky frames, and about half reject under a tenth.** Precision near 0.8 is not evidence of
+skill; it is the drone prior (78% of test-2 frames, 72% of test 1) showing through a detector that
+says "drone" almost always. This is the same failure notes 28–30 and 38 describe with AUROCs, made
+legible: the tables do not change any conclusion, they remove the room to read one charitably.
+
+Two details matter for what comes next. The best cell, `device3` K=9, is also the one with the most
+history (notes 34), so whatever rejection exists comes from time, not timbre; that is the motivation
+for scoring localizer persistence directly (notes 45). And the within-scene detector is no better
+than the map models' presence heads, so a separate detector buys nothing at this operating point.
+
+**The presence probabilities are not probabilities.** `utils/calibration.py` bins sigmoid(logit)
+for every headline cell on test 2, three seeds pooled (`figures/calibration_presence_test_2.png`,
+`results/calibration_presence.json`). Every cell puts 93–100% of all frames above p = 0.99 and
+99–100% of no-drone frames above p = 0.5; the top bin, which holds nearly everything, is right
+78% of the time, which is the drone rate. ECE is 0.21–0.22 and the Brier score (0.215–0.224) is
+*worse* than always answering the base rate (0.172).
+
+This is not the class weighting. Training runs at a presence pos_weight of 0.157 (86% of training
+frames have a drone), which pushes logits *toward* "no drone". The head saturates the other way
+because it drives training loss to near zero on the two training scenes' ambient and treats any
+unfamiliar ambient as drone — the soundscape memorization of notes 38, visible in the logits. So:
+a 0.5 threshold is meaningless for these models, any reported probability needs the caveat, and
+temperature scaling alone would not help: it cannot reorder frames, and the ordering itself is
+seed-unstable — test-2 presence AUROC ranges 0.29–0.85 across the three seeds of one cell
+(`device3` K=5), and 0.38–0.82 at `device3` K=1. The fix belongs in training (the held-out validation split and regularization of
+Phase 3), not in post-hoc calibration.
+
+## 44. The shape of the direction error: elevation matters, the far field is lost, not biased
+
+Every direction number so far is a mean or median per range bin. `utils/error_structure.py` asks
+what those averages hide, on test 2, for the two rectangle-vs-disc pairs that have dumps (`all24`
+K=1 and `device3` K=9, three seeds each), with delay-and-sum as the model-free reference. It uses
+the continuous decode, and its gate is that the pooled hit rates and range-bin azimuth errors
+reproduce `results/polar_vs_rect.json` and `results/polar_k9.json` exactly. Output:
+`results/error_by_elevation.json`, `figures/error_structure_test_2.png`.
+
+**Elevation is a first-order factor, and not a proxy for range.** Within 10°, by true elevation:
+
+| Elevation | `all24` K=1 rect | disc | DAS | `device3` K=9 rect | disc | DAS | frames |
+|---|---|---|---|---|---|---|---|
+| 0–15° | 39.3% | 28.8% | 4.6% | 42.8% | 39.5% | 8.4% | 1312 |
+| 15–30° | 66.3% | 58.6% | 11.4% | 69.4% | 69.4% | 17.2% | 3385 |
+| 30–45° | 69.9% | 71.7% | 35.1% | 71.7% | 70.4% | 37.0% | 3686 |
+| 45–60° | 80.0% | 88.2% | 41.4% | 89.1% | 89.4% | 52.8% | 1885 |
+| 60–90° | 91.7% | 98.0% | 82.3% | 95.4% | 97.5% | 86.5% | 1658 |
+
+Low elevation is mostly far away, so the obvious worry is confounding; it does not survive
+splitting by range. Inside 0–50 m alone the rectangle goes from 43% at 0–15° to 92% above 60°
+(`all24`), and inside 50–100 m from 36% to 93%. Part of the high-elevation advantage is geometry,
+not skill — near the zenith every azimuth is within a few degrees of every other on the sphere,
+so a 10° hit is nearly free — but the low-elevation deficit is real: a drone near the horizon is
+where the array's aperture is foreshortened and where ground reflection arrives almost with the
+direct path. The 14% of test-2 drone frames that are below 15° or beyond 100 m hold 30–32% of
+the misses; the remaining misses are spread over the 15–45° band, where most of the frames are.
+
+**The disc is the reverse of what it was built for.** The native disc was motivated by finer
+azimuth sampling at the rim, which is the horizon. At `all24` K=1 it is *worse* there (−10.5 pp at
+0–15°, −7.7 pp at 15–30°) and better high up (+8.2 and +6.3 pp), and the pattern holds inside
+each range bin (0–50 m, 45–60°: 65% → 91%). The pooled means in notes 36 averaged a loss and a
+gain into near zero. At `device3` K=9 the two layouts agree to within 3 pp in every bin with more
+than 200 frames, which is notes 42's "the mechanisms do not compound" seen per elevation. These are
+seed means with seed spread shown in the figure, not clustered tests; the per-cell intervals are
+notes 40's machinery applied in the next step.
+
+**The far field is lost, not biased.** For signed azimuth error, the mean resultant length R is 1
+for a fixed offset and 0 for answers uniform on the circle:
+
+| Signed azimuth error | 0–50 m | 50–100 m | 100–200 m |
+|---|---|---|---|
+| `all24` K=1 rect: R, bias | 0.90, +0.0° | 0.79, +2.5° | 0.45, −55° |
+| `device3` K=9 rect: R, bias | 0.90, −0.7° | 0.75, +0.4° | 0.33, −23° |
+| DAS `all24`: R, bias | 0.56, +10.7° | 0.37, +62° | 0.96, −18° |
+
+Inside 100 m the models have no bias worth correcting. Beyond it R collapses, and the pooled
+"bias" is not one: per seed it is −93°, −38° and −38° at `all24`, and −126°, −2° and −8° at
+`device3` K=9. The scatter shows why. All 374 far frames lie at one true bearing (140–170°, two
+crossings on one heading), and the predictions smear vertically across the whole circle at that
+bearing. Front-back flips are not the story either: 7.9% of far frames land within 30° of the
+mirror direction at `all24`, below the 17% a uniform guess would put there (24% at `device3` K=9,
+modestly above). A seed-dependent smear is what an SNR limit looks like, which is notes 25's reading
+and says a steering or label correction would buy nothing out there.
+
+**Delay-and-sum is the exception, and it is a lead for the signal checks.** Its far-field answers
+are tightly concentrated (R 0.96) about 18° off (11° for `device3`). A model-free method with a
+fixed offset on one heading points at geometry or labels — the array's heading reference, the
+GPS-to-array transform, or a propagation delay — rather than at learning; the signed-bias check of
+Phase 1 (with data) is the test, and it should be run per session before any retraining. Its
+near-field bias (+10.7° with R 0.56) is phantom peaks, which the models were trained to reject.
+
+Two visible structures in the near-field scatter are worth naming for whoever looks next: vertical
+streaks (a fixed true bearing with wandering predictions — the drone hovering while the output
+drifts) and short horizontal runs near a predicted −10° to 0° across many true bearings, which is
+what a fixed-direction interferer or a learned prior toward the training trajectories would draw.
+
+## 45. Persistence as a detection score: the localizer is a better detector than the detector
+
+Every learned detection score here keys on what a frame sounds like, and notes 28 and 38 showed
+what that buys across scenes: the per-channel detector's leave-one-scene-out fold mean is AUROC
+0.49. A drone has a second property that diffuse ambient does not: it is one point source moving
+smoothly, so a localizer aimed at it returns nearly the same direction frame after frame.
+`utils/persistence_detector.py` scores exactly that — minus the RMS great-circle spread of the
+last n direction estimates, causal, within a segment, for n = 3, 5, 9 — which is the paper's
+binary 3-frame stability rule made continuous (the gate: at n = 3 and 10° it reproduces
+`check_vs_paper.stability_flags` frame for frame). It has no parameters, so nothing in it can be
+fit to a scene. Output: `results/persistence_detector.json`.
+
+AUROC on test 2, drone frames against the no-drone frames; the reference is the model's own
+presence logit (for delay-and-sum, the peak level) on the same frames:
+
+| Localizer | Persistence n=9, pooled | seeds | Reference score | seeds | 0–50 m | 50–100 m | 100–200 m |
+|---|---|---|---|---|---|---|---|
+| U-Net `all24` K=1 | **0.859** | 0.82 / 0.86 / 0.90 | 0.728 | 0.76 / 0.85 / 0.58 | 0.91 | 0.81 | 0.59 |
+| U-Net `device3` K=1 | **0.811** | 0.81 / 0.81 / 0.82 | 0.585 | 0.56 / 0.82 / 0.38 | 0.88 | 0.75 | 0.34 |
+| U-Net `device3` K=9 | **0.826** | 0.84 / 0.83 / 0.81 | 0.790 | 0.83 / 0.83 / 0.71 | 0.87 | 0.80 | 0.55 |
+| U-Net `best6` K=1 | **0.747** | 0.72 / 0.77 / 0.75 | 0.672 | 0.59 / 0.70 / 0.73 | 0.85 | 0.65 | 0.44 |
+| DAS `all24` | 0.543 | — | 0.589 | — | 0.59 | 0.48 | 0.61 |
+| DAS `device3` | 0.550 | — | 0.631 | — | 0.60 | 0.48 | 0.63 |
+
+(Range columns are persistence n=9, drone frames in the bin against all no-drone frames.)
+
+**What it shows.** On the same frames, the stability of the U-Net's answer separates drone from
+empty sky better than the U-Net's own presence head does, in every cell, and it does so
+*reproducibly*: persistence varies by 0.01–0.08 across seeds where the presence logit varies by up
+to 0.44. The presence head is a separate classifier that learned the training ambient (notes 43);
+the mask head had to learn where a drone *is*, and on empty sky it has nothing stable to point at.
+Longer windows help the models (n = 3 → 9 adds 0.00–0.06) and slightly hurt delay-and-sum, whose
+raw peaks are too erratic to average. Delay-and-sum persistence is weak (0.54–0.60), so the gain is
+not free geometry: it is the U-Net's learned rejection of phantoms, read out as stability.
+
+**What it does not show, and the comparison that is fair.** The 0.49 is a cross-scene number, and
+this is not one: the map models were trained with `no_drone_1` from the same session as test 2's
+negatives, so test 2 is within-scene for the negatives. The like-for-like comparison is the
+detector trained on the same split and scored on the same test 2, which reaches 0.66–0.83 over
+K = 1, 5, 9 (notes 39). Persistence from a *single-frame* U-Net (0.81–0.86) sits at or above the
+detector's K=9 seeds (0.73–0.83) without any history in the network. Whether it survives a new scene cannot be answered
+from these dumps, because no map model was trained leave-one-scene-out; test 1, a different day at
+a different site, is exactly that test, and it is sealed. The prediction worth registering, if the
+report wants a detection claim, is that n=9 persistence from the committed `all24` K=1 seeds keeps
+AUROC above 0.75 on test 1 where the presence head does not — to be written in
+`docs/prereg_test1.md` before anything is scored, per the protocol. It is not registered here.
+
+Two limits carry over. Beyond 100 m persistence is at chance or below (0.34–0.63), which is notes
+44's finding again: a localizer that is lost cannot be steady. And no-drone scenes with a *steady*
+point source — a generator, a road at a fixed bearing, a drone idling on the ground before takeoff —
+are exactly what this score would call a drone; `pre_takeoff` is only 494 frames, and delay-and-sum's
+own peak level ranks it *above* flight (AUROC 0.23–0.29 against it), which says that scene is loud and
+localized. At frame level these AUROCs carry the correlation of notes 40, so differences under
+about 0.05 between rows are not claims.
+
+## 46. The hybrid decoder: a clean null, and the near-field mechanism it exposed
+
+The idea: delay-and-sum is worse than the U-Net on average (32.6% within 10° on test 2 against
+70.5% at `all24`), but on a frame whose beamformed peak stands far above the map its location is
+physics, and a network trained on two scenes has no business overruling it. So
+`utils/hybrid_decoder.py` takes delay-and-sum's direction when its peak contrast (`contrast_db`)
+exceeds a threshold and the U-Net's otherwise, sweeps the threshold on test 2, and reports both the
+in-sample optimum and a cross-fitted score (threshold chosen on alternate 30 s blocks, scored on the
+others). Grid-snapped, so the U-Net-only end is the headline number; the gate is that both ends of
+the sweep reproduce the stored U-Net and delay-and-sum hit rates. Test 1 is not scored. Output:
+`results/hybrid_decoder.json`.
+
+**Null, and a firm one.** For `all24` K=1, `device3` K=1 and `device3` K=9 the best threshold is
+"never", in sample and cross-fitted alike: delay-and-sum is behind the U-Net in *every* contrast
+decile, by 9 to 71 pp. Even an oracle gate that picks whichever answer is right on each frame lifts
+the three cells only to 72.2%, 71.6% and 75.9% (+1.7, +2.3, +2.7 pp), so no better gating rule is
+waiting to be found either. Delay-and-sum is not a second opinion worth having on these arrays.
+
+**What the contrast deciles show instead is a near-field failure specific to the 24-mic array.**
+Within 10°,
+by delay-and-sum contrast decile (the median range of each decile in brackets):
+
+| Contrast decile | `all24`: DAS / U-Net | `device3` K=1: DAS / U-Net |
+|---|---|---|
+| lowest | 20% / 92% (75 m) | 14% / 65% (61 m) |
+| 5th | 41% / 77% (46 m) | 25% / 60% (55 m) |
+| 8th | 43% / 67% (27 m) | 59% / 78% (27 m) |
+| 9th | 30% / 51% (16 m) | 71% / 80% (19 m) |
+| highest | **11% / 28%** (26 m) | **66% / 85%** (17 m) |
+
+Contrast rises as the drone comes close, which is expected. What is not expected is that on the
+large array the loudest, closest frames are where *both* methods are worst, while on the small
+array they are where both are best. The U-Net inherits whatever it is, because its input *is*
+the delay-and-sum maps.
+
+Aperture alone does not explain it. The obvious suspect is the plane-wave assumption behind every
+steering vector, which holds beyond roughly 2D²/λ — but the apertures are similar, 1.30 m for
+`all24` and 1.09 m for device 3 (notes 2's table), so across the 200–2200 Hz band the model uses
+that boundary is about 22 m against 15 m, and both arrays' top-contrast frames (median 16–26 m and
+17 m) sit near it. Curvature should hurt both, and it hurts one. What does separate them:
+
+- **`all24` is the only subset that spans all four recorders.** A fixed timing offset between
+  recorders mis-steers every frame, but it matters most when the signal is strong and coherent
+  across devices, which is the close, loud frames; a single recorder has one clock and cannot show
+  it. The cross-correlation lag check of Phase 1 (Track B, B1) tests this directly, per recorder
+  pair, with a stated gate of one sample.
+- **Vertical extent**: 1.16 m for `all24` against 0.49 m for device 3 (the flatness table in notes 11),
+  so a curved wavefront from a source overhead at 20 m is mis-modelled over a larger depth.
+  Near-field (spherical) steering at a reference range of about 20 m (Phase 4 §8, Track B) tests
+  this, and it predicts recovery on `all24`'s top decile and no change on device 3.
+
+The two predictions differ, so the two Track B checks can tell them apart, and both should run
+before any near-field ablation is trained. Until then this is a pattern on two arrays and one
+flight with the mechanism open, not a demonstration; the frame-level caveats of notes 40 apply.
+The near-field weakness of notes 25 now has a location — the loudest `all24` frames — if not yet
+a cause.
+
+## 47. A kinematic filter after the network, and two readings of the same error
+
+The network's direction jumps by tens of degrees between frames while the GPS track moves a
+fraction of a degree. A drone cannot do that. This section records the rule that rejects those
+jumps, then reads every variant twice: once in the paper's units, once in ours. The rule is
+applied to directions that were already saved. Nothing was retrained.
+
+### The angle, and the two ways of summarizing it
+
+The error on a frame is the angle between two directions on the sky. Write each as a unit
+vector, x = cos(e) cos(a), y = cos(e) sin(a), z = sin(e), and take the angle
+between the vectors. Azimuth and elevation are not limited separately. Crossing the zenith
+can flip the compass bearing by 180° while the sky angle stays a few degrees, and the vector
+angle treats that as the small step it is. The same flip at 20° elevation is a large sky
+angle and is rejected.
+
+Two summaries of that angle, and they do not convert into each other:
+
+- **Ours.** The share of drone frames whose error is at most 10°, the label tolerance.
+  Bins are 0–30, 30–60, 60–90, 90–120, 120–180 m, plus every frame. This is the number in
+  sections 21 and 35. The decoder is the brightest cell: on the rectangular grid,
+  `AZ[az_idx]` and `EL[el_idx]`; on a disc, the stored argmax direction, because those
+  indices are not the rectangular grid.
+- **Theirs.** The mean of the same angle, in their bins 0–50, 50–100, 100–200 m. Fig. 5 of
+  arXiv:2508.00307v1 is bar heights, read to the nearest degree (section 23). Their U-Net
+  bars are the frames whose last three directions already agree within 10°. Their
+  delay-and-sum bars are every frame. They do not publish a score on the 52 minutes they
+  trained on. Fig. 5 is the two held-out flights.
+
+A mean is pulled by the tail, so a bin can look moderate and still almost never land inside
+10°. On the same-site flight, delay-and-sum past 100 m has a mean of 31°, next to their 33°,
+and 2% of those frames are inside 10°. Quoting one number as if it were the other flatters
+whoever picked the kinder summary.
+
+The tables below keep every drone frame. A row labeled "stable frames" is their cut, applied
+to our predictions with `stability_flags` in `utils/check_vs_paper.py`. The filter is a third
+thing again: it changes the direction, and the frame is still scored.
+
+### The filter
+
+The cap comes from the aircraft, not from which angle scored best on these flights. A DJI
+Air 3 in sport mode is published at 21 m/s horizontally. A frame is 0.1 s, so the drone can
+move 2.1 m. At range r that is an angle of degrees(2.1 / r), plus one 4°
+cell because the decoder sits on the grid. The range in the tables is the GPS range. The
+network does not estimate range. With no range, the same rule at a declared nearest range of
+10 m is a fixed 16° cap; on the same-site 24-mic K=1 run that fixed cap landed within about
+a point of the range-dependent one.
+
+The stored direction starts as the first frame's brightest cell and resets at each segment.
+A new direction inside the cap of the stored one is taken at once. A direction outside it is
+taken only after five consecutive frames, half a second, all lie inside the cap of that
+candidate. Otherwise the stored direction is kept. A hard hold with no second chance was
+tried and it wrecks the score, because some large jumps are the model correcting itself.
+
+This sits after the mask, on the decoded direction. It is not their three-frame stability
+rule, which drops the frame. It is not an extra input channel and not a reason to retrain:
+blanking the beamforming map before the network would delete the grating-lobe evidence the
+U-Net is there to read, and feeding the network its own previous output compounds a wrong
+lock.
+
+### Same site, every variant
+
+Mar 18 flight 2, the flight Fig. 5 was checked against. Not a training flight. Three seeds
+where three exist; ± is the seed sd and is omitted when it rounds below 2. A star is one
+run. The arrow is the raw direction, then the same frames after the filter. The four-times-
+wider net has no per-frame dump.
+
+Their published U-Net on this flight is 10°, 13°, 14°, on stable frames. Their
+delay-and-sum is 38°, 75°, 33°.
+
+Mean angular error, their bins:
+
+| | 0–50 m | 50–100 m | 100–200 m |
+|---|---:|---:|---:|
+| Paper, delay-and-sum | 38° | 75° | 33° |
+| Paper, U-Net, stable frames | 10° | 13° | 14° |
+| Delay-and-sum, 24 mics * | 40° → 37° | 72° → 72° | 31° → 34° |
+| Delay-and-sum, device 3 * | 37° → 33° | 65° → 61° | 24° → 25° |
+| Delay-and-sum, searched 6 * | 42° → 29° | 66° → 41° | 37° → 18° |
+| 24 mics, K=1 | 14° → 11 ± 2° | 21° → 12 ± 6° | 59 ± 15° → 20 ± 14° |
+| 24 mics, K=5 | 14° → 12° | 18° → 15 ± 3° | 61 ± 14° → 56 ± 12° |
+| 24 mics, K=1, Tversky | 17 ± 2° → 11 ± 2° | 27 ± 3° → 13 ± 2° | 65 ± 13° → 28 ± 7° |
+| 24 mics, K=1, disc resampled | 14° → 12° | 23 ± 2° → 18 ± 3° | 81 ± 12° → 84 ± 10° |
+| 24 mics, K=1, disc native | 14° → 12° | 24 ± 2° → 17 ± 4° | 50 ± 9° → 39 ± 35° |
+| 24 mics, K=1, native disc + Tversky | 17 ± 2° → 13° | 25 ± 4° → 17 ± 8° | 44 ± 22° → 21 ± 11° |
+| Device 3, K=1 | 15° → 11° | 23° → 15 ± 3° | 64 ± 2° → 27 ± 18° |
+| Device 3, K=5 | 14° → 13° | 22° → 20 ± 3° | 75 ± 4° → 81 ± 14° |
+| Device 3, K=9 | 13° → 13° | 22 ± 2° → 21 ± 3° | 54 ± 26° → 54 ± 26° |
+| Device 3, K=9, disc native | 13° → 12° | 21 ± 2° → 20 ± 2° | 64° → 63 ± 2° |
+| Searched 6, K=1 | 20° → 13° | 37° → 29 ± 2° | 59 ± 5° → 16 ± 7° |
+| Searched 6, K=5 | 18° → 15° | 34° → 30 ± 3° | 50 ± 7° → 33 ± 18° |
+| Device 1+3, K=1 * | 13° → 8° | 20° → 12° | 55° → 36° |
+| Device 1, K=1 * | 15° → 11° | 39° → 30° | 69° → 73° |
+| Device 4, K=1 * | 18° → 14° | 35° → 36° | 66° → 80° |
+| Symmetric 6, K=1 * | 16° → 12° | 31° → 13° | 49° → 8° |
+| Quad 4, K=1 * | 20° → 15° | 32° → 29° | 64° → 12° |
+
+Share of frames inside 10°, our bins:
+
+| | 0–30 m | 30–60 m | 60–90 m | 90–120 m | 120–180 m | all |
+|---|---:|---:|---:|---:|---:|---:|
+| Delay-and-sum, 24 mics * | 50% → 52% | 33% → 36% | 18% → 21% | 3% → 0% | 2% → 0% | 33% → 35% |
+| Delay-and-sum, device 3 * | 54% → 56% | 36% → 39% | 27% → 32% | 7% → 9% | 16% → 17% | 38% → 41% |
+| Delay-and-sum, searched 6 * | 39% → 43% | 23% → 27% | 19% → 34% | 6% → 9% | 13% → 0% | 26% → 33% |
+| 24 mics, K=1 | 66 ± 5% → 66 ± 5% | 79% → 83 ± 3% | 73% → 82 ± 6% | 57 ± 3% → 74 ± 12% | 27 ± 11% → 55 ± 13% | 70 ± 2% → 76% |
+| 24 mics, K=5 | 63% → 62% | 79 ± 3% → 81 ± 2% | 75% → 77 ± 3% | 60 ± 2% → 64 ± 6% | 27 ± 6% → 34 ± 12% | 70% → 72% |
+| 24 mics, K=1, Tversky | 60 ± 2% → 61 ± 3% | 74 ± 3% → 82 ± 7% | 66% → 81% | 42 ± 7% → 70 ± 4% | 20 ± 5% → 50 ± 15% | 64 ± 2% → 73 ± 2% |
+| 24 mics, K=1, disc resampled | 73% → 74% | 76% → 80% | 67 ± 2% → 75 ± 4% | 63 ± 5% → 80 ± 5% | 22 ± 6% → 26 ± 6% | 71% → 76% |
+| 24 mics, K=1, disc native | 71 ± 3% → 72 ± 3% | 75 ± 3% → 78 ± 3% | 67% → 77 ± 5% | 65 ± 7% → 69 ± 7% | 38 ± 12% → 73 ± 22% | 70% → 75% |
+| 24 mics, K=1, native disc + Tversky | 66 ± 2% → 67 ± 2% | 73 ± 4% → 77 ± 2% | 65 ± 4% → 74 ± 9% | 49 ± 8% → 64 ± 16% | 36 ± 10% → 55 ± 28% | 66 ± 3% → 71 ± 4% |
+| Device 3, K=1 | 69 ± 3% → 70 ± 2% | 75% → 81 ± 2% | 68% → 77% | 56% → 64 ± 20% | 25 ± 4% → 65 ± 11% | 69% → 75 ± 2% |
+| Device 3, K=5 | 69 ± 4% → 69 ± 4% | 79 ± 2% → 80 ± 2% | 72 ± 2% → 75 ± 2% | 55 ± 10% → 54 ± 11% | 22 ± 4% → 20 ± 8% | 71 ± 2% → 72 ± 2% |
+| Device 3, K=9 | 72 ± 2% → 72 ± 2% | 78 ± 3% → 78 ± 4% | 73 ± 3% → 74 ± 4% | 71 ± 12% → 74 ± 12% | 24 ± 6% → 22 ± 4% | 73% → 73 ± 2% |
+| Device 3, K=9, disc native | 71 ± 3% → 71 ± 3% | 80 ± 2% → 81 ± 3% | 72 ± 3% → 72 ± 2% | 57 ± 5% → 60 ± 4% | 25 ± 6% → 30 ± 9% | 73 ± 2% → 73 ± 2% |
+| Searched 6, K=1 | 59 ± 4% → 61 ± 4% | 62% → 65 ± 3% | 41 ± 3% → 47 ± 7% | 24 ± 3% → 41 ± 13% | 9 ± 3% → 44 ± 41% | 52% → 57 ± 3% |
+| Searched 6, K=5 | 55 ± 3% → 55 ± 3% | 59% → 61% | 50% → 55 ± 2% | 30 ± 5% → 41 ± 5% | 19 ± 7% → 47 ± 43% | 53% → 56 ± 2% |
+| Device 1+3, K=1 * | 72% → 73% | 81% → 91% | 72% → 83% | 55% → 68% | 20% → 58% | 73% → 81% |
+| Device 1, K=1 * | 69% → 69% | 69% → 76% | 46% → 49% | 22% → 38% | 8% → 18% | 59% → 63% |
+| Device 4, K=1 * | 66% → 66% | 60% → 62% | 43% → 43% | 32% → 17% | 1% → 0% | 54% → 55% |
+| Symmetric 6, K=1 * | 67% → 67% | 72% → 78% | 58% → 73% | 39% → 72% | 34% → 58% | 64% → 72% |
+| Quad 4, K=1 * | 58% → 59% | 61% → 65% | 47% → 59% | 41% → 71% | 10% → 58% | 54% → 62% |
+
+On the training flights the same filter moves the overall share by 1 to 4 points: 24 mics
+K=1 from 83% to 85%, device 3 K=1 from 84% to 88%, and device 3 at K=5 and K=9 stays at
+90–91% and 88–89%. That is the fit set. The claim is the two flights below and above.
+
+### New site, a second look
+
+Oct 11 flight 5 was scored once, sealed, in section 35. The numbers here are a second pass
+over dumps that already existed, to put that flight in their bins and under this filter.
+It is 1,592 drone frames, about 2.7 minutes. Their bins hold 677, 677 and 238 frames. The
+cap still uses GPS range, and the form of the rule was settled on the same-site flight
+first.
+
+Their U-Net on this flight is 12°, 24°, 54°. Their delay-and-sum is 8°, 29°, 92°.
+
+Mean angular error, every frame, then after the filter:
+
+| | 0–50 m | 50–100 m | 100–200 m |
+|---|---:|---:|---:|
+| Paper, delay-and-sum | 8° | 29° | 92° |
+| Paper, U-Net, stable frames | 12° | 24° | 54° |
+| Delay-and-sum, 24 mics | 9° → 7° | 23° → 15° | 83° → 13° |
+| 24 mics, K=1 | 24 ± 3° → 21 ± 3° | 19 ± 2° → 15 ± 2° | 46 ± 7° → 8 ± 3° |
+| 24 mics, K=5 | 25 ± 7° → 23 ± 9° | 23 ± 6° → 21 ± 4° | 57 ± 15° → 37 ± 10° |
+| Device 3, K=1 | 17° → 14° | 19° → 12 ± 4° | 26 ± 7° → 12 ± 5° |
+| Device 3, K=5 | 16 ± 3° → 14 ± 2° | 18 ± 2° → 17 ± 2° | 19 ± 8° → 8 ± 2° |
+| Device 3, K=9 | 17° → 17° | 17 ± 2° → 17° | 24 ± 6° → 19 ± 9° |
+
+The same predictions on the frames they keep, raw, so the cut matches theirs:
+
+| Stable frames | 0–50 m | 50–100 m | 100–200 m | Frames kept |
+|---|---:|---:|---:|---|
+| Paper, U-Net | 12° | 24° | 54° | not stated |
+| Delay-and-sum, 24 mics | 7° | 14° | 87° | 616 / 513 / 57 of 677 / 677 / 238 |
+| 24 mics, K=1 | 16 ± 4° | 10 ± 3° | 20 ± 9° | 577 / 482 / 105 |
+| Device 3, K=1 | 14° | 12 ± 3° | 11 ± 2° | 601 / 576 / 126 |
+| Device 3, K=5 | 14 ± 2° | 15° | 13 ± 4° | 635 / 619 / 218 |
+| Device 3, K=9 | 16° | 15 ± 2° | 16 ± 4° | 650 / 613 / 172 |
+
+Share of all frames inside 10°, pooled: delay-and-sum 64% → 79%; 24 mics K=1,
+52 ± 6% → 61 ± 5%; 24 mics K=5, 53 ± 7% → 56 ± 7%; device 3 K=1, 54 ± 5% → 61 ± 3%;
+device 3 K=5, 57 ± 8% → 60 ± 8%; device 3 K=9, 52 ± 3% → 52 ± 4%. The closest 30 m stay
+near 30% for every network. The frames past 120 m are one 7-second pass, 67 frames.
+
+### Where we are ahead, and where we are not
+
+**Same site, under 100 m.** Even with them, and slightly ahead on the frames they keep.
+Section 23 already has that cut: stable-frame means of 7–10° and 9–12° against their 10°
+and 13°. After the filter, and keeping every frame, 24 mics at K=1 reads 11° and 12°.
+
+**Same site, past 100 m.** Theirs. The bin is 374 frames. On the frames they keep we are
+still around 30–70° (section 23). On every frame the single-frame networks sit near 50–65°,
+and the filter brings the better of them to about 20° (24 mics K=1, 59° → 20°; device 3
+K=1, 64° → 27°). Their published mean is 14°. The filter is the largest move we have made
+in that bin, and it does not land on their number.
+
+**New site, under 50 m.** Theirs. Their U-Net is 12°. Our 24-mic network is 24° on every
+frame and 16° on the frames they keep. Device 3 is 17° and 14°. The closest 30 m, near 30%
+inside 10°, are the same near-field failure as sections 35 and 46.
+
+**New site, from 50 m out.** Ours, and the gap past 100 m is large. On the frames they
+keep, device 3 at K=1 is 12° and 11° against their 24° and 54°. The 24-mic network is 10°
+and 20° on that cut. This is a second look at one short flight, so it is a direction, not
+a sealed result. The size of the far-bin gap is what makes it readable anyway.
+
+**The filter against learned history.** On a single frame it adds about 5 to 9 points on
+the same site (24 mics 70% → 76%, device 3 69% → 75%) and about 7 points on the new site
+(52% → 61%, 54% → 61%). Once five or nine frames are already stacked it adds about a point,
+and on device 3 at K=9 it adds none (73% → 73% on the same site, 52% → 52% on the new
+site). One noisy cell still favors the stack: same-site device 3 at 90–120 m, K=9 raw
+71 ± 12% against filtered K=1 at 64 ± 20%, and the spreads overlap. The single-frame
+network plus the filter is the combination that transfers. The stack learned the same
+kind of smoothness from two flights at the training site and did not.
+
+**Where the filter makes a row worse.** It holds a direction. If that direction is wrong
+and the raw jumps would have been right, the row drops. On the same site that is device 4
+past 100 m (66° → 80°, and 32% → 17% inside 10° at 90–120 m) and device 3 at K=5 past
+100 m (75° → 81°). The resampled disc past 100 m does not move (81° → 84°). A filter is
+not a correction for an array that is stably wrong.

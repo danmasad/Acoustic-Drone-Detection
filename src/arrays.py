@@ -1,8 +1,8 @@
 """Which microphones to keep, and how badly thinning the array hurts.
 
-Promoted from utils/search_mic_subsets.py and utils/search_best_dense.py, whose dense
+Promoted from utils/search/search_mic_subsets.py and utils/search/search_best_dense.py, whose dense
 search over every non-coplanar 4- and 6-microphone subset is already complete and cached
-in results/subset_search.npz. This module is the library form: score a subset, look up a
+in results/search/subset_search.npz. This module is the library form: score a subset, look up a
 searched optimum, or re-run the search if the geometry ever changes.
 
 The score is the strongest false peak more than 15 degrees from a single true source,
@@ -13,7 +13,7 @@ import itertools
 
 import numpy as np
 
-from .config import AZ, C, EL, GRID_SHAPE, MIC_SUBSETS, RESULTS
+from .config import AZ, C, EL, GRID_SHAPE, MIC_SUBSETS, search_file
 from .geometry import coplanar_thickness, directions
 
 SEARCH_BAND = np.linspace(200.0, 2200.0, 16)   # the model band, coarsely sampled
@@ -72,7 +72,7 @@ def sidelobe_db(pos: np.ndarray, channels, sources=None, band=SEARCH_BAND) -> di
 
 def load_search() -> dict:
     """The cached dense search: every non-coplanar 4- and 6-subset scored on 250 directions."""
-    return dict(np.load(RESULTS / "subset_search.npz", allow_pickle=False))
+    return dict(np.load(search_file(), allow_pickle=False))
 
 
 def best_subset(n: int, exhaustive: bool = False, pos: np.ndarray | None = None,

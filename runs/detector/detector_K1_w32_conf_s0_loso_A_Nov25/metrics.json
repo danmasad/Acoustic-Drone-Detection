@@ -1,0 +1,574 @@
+{
+  "config": {
+    "run_id": "detector_K1_w32_conf_s0_loso_A_Nov25",
+    "K": 1,
+    "width": 32,
+    "seed": 0,
+    "lr": 0.001,
+    "batch": 32,
+    "channels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23
+    ],
+    "band": [
+      200.0,
+      4000.0
+    ],
+    "input_mean": 138.49583435058594,
+    "input_std": 9.446929931640625,
+    "n_params": 85505,
+    "train_drone_rate": 0.8090931446214378,
+    "confusers": true,
+    "mix_prob": 0.5,
+    "log_bins": 0,
+    "monitor_fraction": 0.2,
+    "early_stopping_on": "interleaved blocks of the training scenes",
+    "train_segments": [
+      "Mar_18_2025_f1_drone",
+      "Mar_18_2025_f1_pre_takeoff",
+      "Mar_18_2025_f2_drone",
+      "Mar_18_2025_f2_no_drone_1",
+      "Mar_18_2025_f2_no_drone_2",
+      "Mar_18_2025_f2_pre_takeoff"
+    ],
+    "val_segments": [
+      "Nov_25_2024_f11_drone",
+      "Nov_25_2024_f11_pre_takeoff"
+    ]
+  },
+  "best_epoch": 9,
+  "test_2": {
+    "auroc": 0.34709461732915126,
+    "auprc": 0.8623610505856789,
+    "specificity_at_95_recall": 0.024844720496894408,
+    "per_channel_auroc": 0.3923503700497271,
+    "by_n_channels": {
+      "1": 0.39351186784797365,
+      "2": 0.3796459051242351,
+      "6": 0.33936805339108583,
+      "24": 0.34709461732915126
+    },
+    "f1_f1": 0.9545679012345679,
+    "f1_precision": 0.9130845536136042,
+    "f1_recall": 1.0,
+    "f1_threshold": 1.4721070528030396,
+    "false_alarms_per_hour": 35999.99999999999,
+    "threshold_at_95_recall": 1.8695238828659058,
+    "n_frames": 14819
+  },
+  "last_epoch": {
+    "auroc": 0.4445379852384059,
+    "auprc": 0.8890758275549917,
+    "specificity_at_95_recall": 0.1125776397515528,
+    "per_channel_auroc": 0.4613875714313256,
+    "by_n_channels": {
+      "1": 0.44469589270738324,
+      "2": 0.4498479681577753,
+      "6": 0.43491148230587134,
+      "24": 0.4445379852384059
+    },
+    "f1_f1": 0.9549193349101563,
+    "f1_precision": 0.9140984049743174,
+    "f1_recall": 0.9995565737935111,
+    "f1_threshold": -0.14346465468406677,
+    "false_alarms_per_hour": 35524.84472049689,
+    "threshold_at_95_recall": 1.1694657802581787,
+    "n_frames": 14819
+  },
+  "history": [
+    {
+      "auroc": 0.6477412380231972,
+      "auprc": 0.9043257885809823,
+      "specificity_at_95_recall": 0.0832072617246596,
+      "per_channel_auroc": 0.5991477743108086,
+      "by_n_channels": {
+        "1": 0.6935429273827534,
+        "2": 0.6413178265254664,
+        "6": 0.6156825516893596,
+        "24": 0.6477412380231972
+      },
+      "f1_f1": 0.9021968101113451,
+      "f1_precision": 0.8222709818979704,
+      "f1_recall": 0.9993333333333333,
+      "f1_threshold": -1.7903505563735962,
+      "false_alarms_per_hour": 35291.98184568835,
+      "threshold_at_95_recall": -1.4443944692611694,
+      "n_frames": 7322,
+      "epoch": 0,
+      "train_loss": 0.26539630017179355,
+      "seconds": 25.773702144622803
+    },
+    {
+      "auroc": 0.5835709783156833,
+      "auprc": 0.8728052384144038,
+      "specificity_at_95_recall": 0.018154311649016642,
+      "per_channel_auroc": 0.548993856635569,
+      "by_n_channels": {
+        "1": 0.5384503277861825,
+        "2": 0.5448071104387292,
+        "6": 0.5851110060514372,
+        "24": 0.5835709783156833
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -0.7904758453369141,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 0.44695037603378296,
+      "n_frames": 7322,
+      "epoch": 1,
+      "train_loss": 0.19944528672007805,
+      "seconds": 24.91581106185913
+    },
+    {
+      "auroc": 0.6814328038325769,
+      "auprc": 0.9139184717018984,
+      "specificity_at_95_recall": 0.040090771558245086,
+      "per_channel_auroc": 0.5996429888426625,
+      "by_n_channels": {
+        "1": 0.6283556480080685,
+        "2": 0.6239659606656581,
+        "6": 0.6466994452849218,
+        "24": 0.6814328038325769
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -1.2633966207504272,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": -0.028154680505394936,
+      "n_frames": 7322,
+      "epoch": 2,
+      "train_loss": 0.1674298488018985,
+      "seconds": 25.291868209838867
+    },
+    {
+      "auroc": 0.7276414523449319,
+      "auprc": 0.9258533060555727,
+      "specificity_at_95_recall": 0.15052950075642965,
+      "per_channel_auroc": 0.6247526632627332,
+      "by_n_channels": {
+        "1": 0.6780804336863339,
+        "2": 0.7022675239536057,
+        "6": 0.7094684190620272,
+        "24": 0.7276414523449319
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": 0.262644499540329,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 0.9479399919509888,
+      "n_frames": 7322,
+      "epoch": 3,
+      "train_loss": 0.16222367711721758,
+      "seconds": 25.320234060287476
+    },
+    {
+      "auroc": 0.7454350100857287,
+      "auprc": 0.9305619363083513,
+      "specificity_at_95_recall": 0.13691376701966718,
+      "per_channel_auroc": 0.6558662301437216,
+      "by_n_channels": {
+        "1": 0.7378427887039839,
+        "2": 0.7393247604639435,
+        "6": 0.7307956379223399,
+        "24": 0.7454350100857287
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -0.6574447751045227,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 0.16903065145015717,
+      "n_frames": 7322,
+      "epoch": 4,
+      "train_loss": 0.1440130677454014,
+      "seconds": 25.295897006988525
+    },
+    {
+      "auroc": 0.7391922592032274,
+      "auprc": 0.9299150988428504,
+      "specificity_at_95_recall": 0.12405446293494705,
+      "per_channel_auroc": 0.6517783503530005,
+      "by_n_channels": {
+        "1": 0.7371746091780131,
+        "2": 0.7286718356026223,
+        "6": 0.7160384518406455,
+        "24": 0.7391922592032274
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -1.1854041814804077,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": -0.102804996073246,
+      "n_frames": 7322,
+      "epoch": 5,
+      "train_loss": 0.13850563322848428,
+      "seconds": 25.275225162506104
+    },
+    {
+      "auroc": 0.7635257186081694,
+      "auprc": 0.9371047993221702,
+      "specificity_at_95_recall": 0.1649016641452345,
+      "per_channel_auroc": 0.6495859703311481,
+      "by_n_channels": {
+        "1": 0.7082927382753403,
+        "2": 0.7340206757438225,
+        "6": 0.7529113716591024,
+        "24": 0.7635257186081694
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": 0.02915908396244049,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 0.9042302966117859,
+      "n_frames": 7322,
+      "epoch": 6,
+      "train_loss": 0.1268512012751785,
+      "seconds": 25.14540386199951
+    },
+    {
+      "auroc": 0.7212355017650025,
+      "auprc": 0.9264348991315954,
+      "specificity_at_95_recall": 0.09757942511346444,
+      "per_channel_auroc": 0.6082394021053958,
+      "by_n_channels": {
+        "1": 0.6439759203227433,
+        "2": 0.6497420574886535,
+        "6": 0.6880423600605143,
+        "24": 0.7212355017650025
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -1.21009361743927,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": -0.10879171639680862,
+      "n_frames": 7322,
+      "epoch": 7,
+      "train_loss": 0.0979834357926452,
+      "seconds": 25.11729407310486
+    },
+    {
+      "auroc": 0.7622078290468987,
+      "auprc": 0.9383425460612616,
+      "specificity_at_95_recall": 0.14674735249621784,
+      "per_channel_auroc": 0.6545041340981678,
+      "by_n_channels": {
+        "1": 0.7045617120524458,
+        "2": 0.7223387544125063,
+        "6": 0.7350710413514876,
+        "24": 0.7622078290468987
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": 0.5459422469139099,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 1.4243770837783813,
+      "n_frames": 7322,
+      "epoch": 8,
+      "train_loss": 0.07329460824097149,
+      "seconds": 25.182202100753784
+    },
+    {
+      "auroc": 0.7841884140191628,
+      "auprc": 0.9403748996920196,
+      "specificity_at_95_recall": 0.2329803328290469,
+      "per_channel_auroc": 0.6649987182719784,
+      "by_n_channels": {
+        "1": 0.7354496974281391,
+        "2": 0.7591040090771558,
+        "6": 0.7771780131114473,
+        "24": 0.7841884140191628
+      },
+      "f1_f1": 0.901725317321578,
+      "f1_precision": 0.8288388989800196,
+      "f1_recall": 0.9886666666666667,
+      "f1_threshold": 1.8260923624038696,
+      "false_alarms_per_hour": 33358.547655068076,
+      "threshold_at_95_recall": 1.9700957536697388,
+      "n_frames": 7322,
+      "epoch": 9,
+      "train_loss": 0.05336064293891019,
+      "seconds": 25.478497982025146
+    },
+    {
+      "auroc": 0.5761009203227433,
+      "auprc": 0.8676482513569626,
+      "specificity_at_95_recall": 0.02042360060514372,
+      "per_channel_auroc": 0.5435060015338712,
+      "by_n_channels": {
+        "1": 0.5404505799293999,
+        "2": 0.5793845184064549,
+        "6": 0.610243255168936,
+        "24": 0.5761009203227433
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": 1.9025239944458008,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 3.3898515701293945,
+      "n_frames": 7322,
+      "epoch": 10,
+      "train_loss": 0.0449432457278627,
+      "seconds": 25.182583808898926
+    },
+    {
+      "auroc": 0.7365247730711044,
+      "auprc": 0.9290152899513922,
+      "specificity_at_95_recall": 0.17549167927382753,
+      "per_channel_auroc": 0.6138674540889225,
+      "by_n_channels": {
+        "1": 0.659036308623298,
+        "2": 0.6978672465960666,
+        "6": 0.724952849218356,
+        "24": 0.7365247730711044
+      },
+      "f1_f1": 0.9007656508031826,
+      "f1_precision": 0.8194482381862879,
+      "f1_recall": 1.0,
+      "f1_threshold": -0.31584346294403076,
+      "false_alarms_per_hour": 36000.0,
+      "threshold_at_95_recall": 1.4815469980239868,
+      "n_frames": 7322,
+      "epoch": 11,
+      "train_loss": 0.03406544510195376,
+      "seconds": 25.19921588897705
+    }
+  ],
+  "confuser_rejection": {
+    "clean_fire_rate": 0.9751552795031055,
+    "mean_fire_rate": 0.9748470709370356,
+    "hard_class_fire_rate": 0.9873470522803114,
+    "worst_class": "airplane",
+    "per_class": {
+      "airplane": {
+        "n": 28,
+        "fire_rate": 1.0
+      },
+      "breathing": {
+        "n": 24,
+        "fire_rate": 0.9166666666666666
+      },
+      "brushing_teeth": {
+        "n": 25,
+        "fire_rate": 1.0
+      },
+      "can_opening": {
+        "n": 17,
+        "fire_rate": 1.0
+      },
+      "car_horn": {
+        "n": 14,
+        "fire_rate": 1.0
+      },
+      "cat": {
+        "n": 25,
+        "fire_rate": 1.0
+      },
+      "chainsaw": {
+        "n": 22,
+        "fire_rate": 1.0
+      },
+      "chirping_birds": {
+        "n": 17,
+        "fire_rate": 0.8823529411764706
+      },
+      "church_bells": {
+        "n": 20,
+        "fire_rate": 0.95
+      },
+      "clapping": {
+        "n": 19,
+        "fire_rate": 0.8947368421052632
+      },
+      "clock_alarm": {
+        "n": 27,
+        "fire_rate": 0.9629629629629629
+      },
+      "clock_tick": {
+        "n": 24,
+        "fire_rate": 0.9583333333333334
+      },
+      "coughing": {
+        "n": 15,
+        "fire_rate": 1.0
+      },
+      "cow": {
+        "n": 27,
+        "fire_rate": 0.9629629629629629
+      },
+      "crackling_fire": {
+        "n": 32,
+        "fire_rate": 0.96875
+      },
+      "crickets": {
+        "n": 20,
+        "fire_rate": 0.95
+      },
+      "crow": {
+        "n": 27,
+        "fire_rate": 1.0
+      },
+      "crying_baby": {
+        "n": 22,
+        "fire_rate": 1.0
+      },
+      "dog": {
+        "n": 20,
+        "fire_rate": 0.95
+      },
+      "door_wood_creaks": {
+        "n": 22,
+        "fire_rate": 1.0
+      },
+      "door_wood_knock": {
+        "n": 17,
+        "fire_rate": 1.0
+      },
+      "drinking_sipping": {
+        "n": 22,
+        "fire_rate": 1.0
+      },
+      "engine": {
+        "n": 29,
+        "fire_rate": 0.9310344827586207
+      },
+      "fireworks": {
+        "n": 34,
+        "fire_rate": 1.0
+      },
+      "footsteps": {
+        "n": 17,
+        "fire_rate": 1.0
+      },
+      "frog": {
+        "n": 18,
+        "fire_rate": 0.9444444444444444
+      },
+      "glass_breaking": {
+        "n": 9,
+        "fire_rate": 1.0
+      },
+      "hand_saw": {
+        "n": 26,
+        "fire_rate": 1.0
+      },
+      "helicopter": {
+        "n": 27,
+        "fire_rate": 1.0
+      },
+      "hen": {
+        "n": 41,
+        "fire_rate": 0.975609756097561
+      },
+      "insects": {
+        "n": 27,
+        "fire_rate": 1.0
+      },
+      "keyboard_typing": {
+        "n": 32,
+        "fire_rate": 0.90625
+      },
+      "laughing": {
+        "n": 26,
+        "fire_rate": 1.0
+      },
+      "mouse_click": {
+        "n": 21,
+        "fire_rate": 0.9523809523809523
+      },
+      "pig": {
+        "n": 19,
+        "fire_rate": 1.0
+      },
+      "pouring_water": {
+        "n": 27,
+        "fire_rate": 0.9629629629629629
+      },
+      "rain": {
+        "n": 27,
+        "fire_rate": 1.0
+      },
+      "rooster": {
+        "n": 19,
+        "fire_rate": 1.0
+      },
+      "sea_waves": {
+        "n": 25,
+        "fire_rate": 1.0
+      },
+      "sheep": {
+        "n": 22,
+        "fire_rate": 0.9545454545454546
+      },
+      "siren": {
+        "n": 38,
+        "fire_rate": 0.9210526315789473
+      },
+      "sneezing": {
+        "n": 11,
+        "fire_rate": 1.0
+      },
+      "snoring": {
+        "n": 23,
+        "fire_rate": 0.9565217391304348
+      },
+      "thunderstorm": {
+        "n": 22,
+        "fire_rate": 1.0
+      },
+      "toilet_flush": {
+        "n": 25,
+        "fire_rate": 0.96
+      },
+      "train": {
+        "n": 19,
+        "fire_rate": 1.0
+      },
+      "vacuum_cleaner": {
+        "n": 31,
+        "fire_rate": 0.967741935483871
+      },
+      "washing_machine": {
+        "n": 29,
+        "fire_rate": 1.0
+      },
+      "water_drops": {
+        "n": 23,
+        "fire_rate": 0.9130434782608695
+      },
+      "wind": {
+        "n": 29,
+        "fire_rate": 1.0
+      }
+    }
+  }
+}

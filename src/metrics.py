@@ -115,8 +115,15 @@ def error_by_distance(errors, range_m, bins=DISTANCE_BINS) -> list[dict]:
     return out
 
 
-def summarize(scores, has_drone, el_idx, az_idx, true_az, true_el, range_m) -> dict:
-    """Every number one run reports. Localization is scored on drone frames only."""
+def summarize(scores, has_drone, el_idx, az_idx, true_az, true_el, range_m,
+              pred_az=None, pred_el=None) -> dict:
+    """Every number one run reports. Localization is scored on drone frames only.
+
+    `pred_az`/`pred_el` give the predicted direction in degrees directly, bypassing the
+    grid-index lookup. Needed by any map layout whose cells are not an elevation-by-azimuth
+    rectangle — the polar disc of `src.polar` — and usable for centroid-decoded predictions
+    on the rectangular grid too.
+    """
     has_drone = np.asarray(has_drone).astype(bool)
     out = {"n_frames": int(len(has_drone)), "n_drone": int(has_drone.sum()),
            "auprc": auprc(scores, has_drone), "auroc": auroc(scores, has_drone),
@@ -126,10 +133,14 @@ def summarize(scores, has_drone, el_idx, az_idx, true_az, true_el, range_m) -> d
     out["false_alarms_per_hour"] = false_alarms_per_hour(scores, has_drone, f1["threshold"])
 
     d = has_drone
-    err = angular_errors(np.asarray(el_idx)[d], np.asarray(az_idx)[d],
-                         np.asarray(true_az)[d], np.asarray(true_el)[d])
-    az_err, el_err = axis_errors(np.asarray(el_idx)[d], np.asarray(az_idx)[d],
-                                 np.asarray(true_az)[d], np.asarray(true_el)[d])
+    ta, te = np.asarray(true_az)[d], np.asarray(true_el)[d]
+    if pred_az is None:
+        pa, pe = AZ[np.asarray(az_idx)[d]], EL[np.asarray(el_idx)[d]]
+    else:
+        pa, pe = np.asarray(pred_az)[d], np.asarray(pred_el)[d]
+    err = angular_distance(pa, pe, ta, te)
+    az_err = np.abs(((pa - ta + 180) % 360) - 180)
+    el_err = np.abs(pe - te)
     out |= {"median_angular_deg": float(np.median(err)),
             "mean_angular_deg": float(err.mean()),
             "median_azimuth_deg": float(np.median(az_err)),

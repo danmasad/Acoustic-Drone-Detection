@@ -18,14 +18,24 @@ from .stft_cache import load_cache
 
 
 class SplitData:
-    """Every segment of one split, pre-selected down to the microphones and bins in use."""
+    """Every segment of one split, pre-selected down to the microphones and bins in use.
+
+    `segs` overrides the split lookup with an explicit segment list, which is what
+    leave-one-scene-out needs: folds there are defined by recording session and flight rather
+    than by the dataset's own train/test roles, so they cannot be expressed as a split name.
+    """
 
     def __init__(self, split: str, channels, K: int = 1, band=MODEL_BAND,
-                 radius: float = ANGULAR_THRESHOLD, verbose: bool = True):
+                 radius: float = ANGULAR_THRESHOLD, verbose: bool = True, segs=None,
+                 polar: bool = False):
+        from . import polar as polar_grid
+
         self.split, self.channels, self.K, self.band = split, list(channels), K, band
+        self.polar = polar
+        make_mask = polar_grid.target_mask if polar else target_mask
         self.segs, self.X, self.masks, self.meta = [], [], [], []
         self.index = []
-        for seg in segments(split):
+        for seg in (segments(split) if segs is None else list(segs)):
             stft, meta = load_cache(seg)
             sel = (meta["freqs"] >= band[0]) & (meta["freqs"] <= band[1])
             X = np.ascontiguousarray(np.asarray(stft)[:, self.channels][:, :, sel])
@@ -33,7 +43,7 @@ class SplitData:
             s = len(self.segs)
             self.segs.append(seg)
             self.X.append(X)
-            self.masks.append(target_mask(meta["az"], meta["el"], radius))
+            self.masks.append(make_mask(meta["az"], meta["el"], radius))
             self.meta.append(meta)
             self.index += [(s, f) for f in range(K - 1, len(X))]
         self.index = np.array(self.index, dtype=np.int64)
@@ -55,7 +65,9 @@ class SplitData:
         """Fraction of pixels that are inside the target disc, over drone frames only."""
         tot = sum(m.sum() for m in self.masks)
         n_drone = sum(int(m["has_drone"].sum()) for m in self.meta)
-        return float(tot / max(n_drone, 1) / (GRID_SHAPE[0] * GRID_SHAPE[1]))
+        cells = int(np.prod(self.masks[0].shape[1:])) if self.masks else \
+            GRID_SHAPE[0] * GRID_SHAPE[1]
+        return float(tot / max(n_drone, 1) / cells)
 
     def batches(self, batch: int = 32, shuffle: bool = True, rng=None):
         """Yields (segment index, X, mask, present, frame indices).
@@ -88,24 +100,39 @@ class SplitData:
                 torch.from_numpy(present.astype(np.float32)), f)
 
 
-def to_maps(bf, X: torch.Tensor, mean: float = 0.0, std: float = 1.0) -> torch.Tensor:
-    """(B, K, M, F) spectra -> (B, K*S, 23, 91) standardized decibel maps."""
+def to_maps(bf, X: torch.Tensor, mean: float = 0.0, std: float = 1.0,
+            projection=None) -> torch.Tensor:
+    """(B, K, M, F) spectra -> (B, K*S, 23, 91) standardized decibel maps.
+
+    With a `projection` (see `src.polar`) the maps come back as (B, K*S, 46, 46) on the disc.
+    Standardization happens first so the projection's zero fill for the dead corners is the
+    mean of the distribution rather than an arbitrary dark value.
+    """
     B, K = X.shape[:2]
     maps = bf.maps(X.reshape(B * K, *X.shape[2:]))
     maps = maps.reshape(B, K * bf.n_subbands, *maps.shape[-2:])
-    return (maps - mean) / std
+    maps = (maps - mean) / std
+    return maps if projection is None else projection(maps)
 
 
 def input_stats(data: SplitData, beamformers, n_batches: int = 16, batch: int = 32,
-                seed: int = 0) -> tuple[float, float]:
+                seed: int = 0, valid=None) -> tuple[float, float]:
     """Global mean and standard deviation of the decibel maps, from a sample of training
     batches. Global rather than per-frame: per-frame normalization would erase the loudness
-    difference between a drone and silence, which is the detection cue."""
+    difference between a drone and silence, which is the detection cue.
+
+    `valid` is a flat boolean mask over the map's cells, for a layout where some cells describe
+    no direction. It matters for the natively steered polar disc: its dead corners all carry the
+    zenith placeholder direction, so leaving them in would let one real direction's energy
+    contribute 21.5% of the statistics and pull the standardization toward the zenith.
+    """
     rng = np.random.default_rng(seed)
     vals = []
     for i, (s, X, *_ ) in enumerate(data.batches(batch, rng=rng)):
         bf = beamformers(s)
         m = bf.maps(X.reshape(-1, *X.shape[2:]).to(bf.device))
+        if valid is not None:
+            m = m.reshape(*m.shape[:2], -1)[..., valid.to(m.device)]
         vals.append(m.flatten().to("cpu"))
         if i + 1 >= n_batches:
             break
