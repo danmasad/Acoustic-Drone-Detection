@@ -25,7 +25,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from . import metrics
-from .config import CACHE_BAND, MIC_SUBSETS, run_dir
+from .beamform import pick_device
+from .config import CACHE_BAND, CHUNK, MIC_SUBSETS, SR, run_dir
 from .data import SplitData
 from .esc50 import HARD_CLASSES
 
@@ -235,8 +236,6 @@ def split_for_early_stopping(data: SplitData, fraction: float = 0.2,
 
 def load_run(run_id: str, device: str = "auto"):
     """A finished detector, ready to score anything: (model, config, stats, bank, device)."""
-    from .beamform import pick_device
-
     saved = json.loads((run_dir(run_id) / "metrics.json").read_text())
     cfg = saved["config"]
     dev = pick_device(device)
@@ -244,24 +243,18 @@ def load_run(run_id: str, device: str = "auto"):
     model.load_state_dict(torch.load(run_dir(run_id) / "best.pt", map_location=dev))
     bank = None
     if cfg.get("log_bins"):
-        freqs = np.fft.rfftfreq(4800, 1 / 48000)
+        freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
         freqs = freqs[(freqs >= cfg["band"][0]) & (freqs <= cfg["band"][1])]
         bank = torch.from_numpy(log_filterbank(freqs, cfg["log_bins"])).to(dev)
     return model, saved, (cfg["input_mean"], cfg["input_std"]), bank, dev
 
 
 def ambient_reference_energy(data: SplitData) -> float:
-    """Median in-band energy of one channel-frame of our own *training* no-drone audio.
+    """Median in-band energy of one channel-frame of *training* no-drone audio.
 
-    This is the level DEMAND scenes get matched to before they are used as training negatives.
-    It has to come from the training split: `utils/analysis/demand_false_alarms.py` takes the same
-    statistic from test 2, which is right for an evaluation that must be in the units the
-    reported threshold lives in, and would be a leak here.
-
-    Taken straight off the labelled frames rather than by sampling batches, because batches are
-    bucketed by segment: unshuffled, the first several hundred are all from the first flight and
-    contain no negatives at all, and a shuffled sample would make the reference level depend on
-    the seed.
+    DEMAND scenes are level-matched to this before use as negatives. Training split only
+    (test 2 here would be a leak), and read off the labelled frames rather than sampled
+    batches so it does not depend on the seed. docs/design_notes.md section 38.
     """
     got = []
     for X, meta in zip(data.X, data.meta):

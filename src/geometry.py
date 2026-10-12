@@ -1,8 +1,7 @@
-"""Microphone positions and steering vectors.
+"""Microphone positions, direction vectors and steering.
 
-Ported from utils/validate/validate_dataset.py. The array was recalibrated between sessions, so
-positions are always read from that session's own alignment_params.json and never
-hardcoded.
+The array was recalibrated between sessions, so positions are always read from that
+session's own alignment_params.json and never hardcoded.
 """
 import itertools
 
@@ -23,6 +22,23 @@ def mic_positions(align: dict) -> np.ndarray:
     pos += [[r[2] * np.cos(np.radians(a2[ai])), r[2] * np.sin(np.radians(a2[ai])), h[2]]
             for ai in range(6)]
     return np.array(pos, dtype=np.float64)
+
+
+def unit_vectors(az_deg, el_deg) -> np.ndarray:
+    """(..., 3) unit vectors from azimuth and elevation in degrees. NaN in, NaN out."""
+    az, el = np.radians(az_deg), np.radians(el_deg)
+    return np.stack([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az), np.sin(el)], axis=-1)
+
+
+def to_angles(v: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Inverse of `unit_vectors`: (azimuth, elevation) in degrees from (..., 3) vectors."""
+    return (np.degrees(np.arctan2(v[..., 1], v[..., 0])),
+            np.degrees(np.arcsin(np.clip(v[..., 2], -1.0, 1.0))))
+
+
+def wrap180(deg) -> np.ndarray:
+    """Fold an angle difference in degrees into [-180, 180)."""
+    return (np.asarray(deg, float) + 180.0) % 360.0 - 180.0
 
 
 def directions(az_deg=AZ, el_deg=EL) -> np.ndarray:

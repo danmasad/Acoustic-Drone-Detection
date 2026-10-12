@@ -12,7 +12,8 @@ Two constraints shape this module:
 import numpy as np
 import torch
 
-from .config import (ANGULAR_THRESHOLD, GRID_SHAPE, MODEL_BAND, N_SUBBANDS, segments)
+from . import polar as polar_grid
+from .config import ANGULAR_THRESHOLD, MODEL_BAND, segments
 from .labels import target_mask
 from .stft_cache import load_cache
 
@@ -28,8 +29,6 @@ class SplitData:
     def __init__(self, split: str, channels, K: int = 1, band=MODEL_BAND,
                  radius: float = ANGULAR_THRESHOLD, verbose: bool = True, segs=None,
                  polar: bool = False):
-        from . import polar as polar_grid
-
         self.split, self.channels, self.K, self.band = split, list(channels), K, band
         self.polar = polar
         make_mask = polar_grid.target_mask if polar else target_mask
@@ -63,11 +62,10 @@ class SplitData:
 
     def mask_positive_rate(self) -> float:
         """Fraction of pixels that are inside the target disc, over drone frames only."""
-        tot = sum(m.sum() for m in self.masks)
+        tot = sum(int(m.sum()) for m in self.masks)
         n_drone = sum(int(m["has_drone"].sum()) for m in self.meta)
-        cells = int(np.prod(self.masks[0].shape[1:])) if self.masks else \
-            GRID_SHAPE[0] * GRID_SHAPE[1]
-        return float(tot / max(n_drone, 1) / cells)
+        cells = int(np.prod(self.masks[0].shape[1:]))
+        return tot / max(n_drone, 1) / cells
 
     def batches(self, batch: int = 32, shuffle: bool = True, rng=None):
         """Yields (segment index, X, mask, present, frame indices).

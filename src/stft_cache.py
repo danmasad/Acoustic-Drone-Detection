@@ -27,6 +27,17 @@ FILTER_BAND = (200.0, 8000.0)
 FILTER_ORDER = 5
 
 
+def bandpass_coeffs(band=FILTER_BAND, order=FILTER_ORDER, sr=SR):
+    """Butterworth (b, a) for the band-pass applied before every STFT in this repo."""
+    return butter(order, [band[0] / (sr / 2), band[1] / (sr / 2)], btype="band")
+
+
+def bandpass(x: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Zero-phase band-pass of `x` along `axis`, identical to the one `build_cache` applies."""
+    b, a = bandpass_coeffs()
+    return filtfilt(b, a, x, axis=axis)
+
+
 def wav_info(path: Path) -> tuple[int, int, int, int]:
     """(data offset, channels, sample rate, bytes per sample) by walking the RIFF chunks.
 

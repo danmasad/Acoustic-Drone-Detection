@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from pyproj import Transformer
 
-from .config import CSV_HZ, FEET_TO_M, MPH_TO_MPS, Segment, UTM_EPSG
+from .config import CSV_HZ, FEET_TO_M, GRID_SHAPE, MPH_TO_MPS, Segment, UTM_EPSG
 from .geometry import angular_distance, directions
 
 _FLIGHT_COLS = ["latitude", "longitude", "altitude_above_seaLevel(feet)",
@@ -85,8 +85,6 @@ def target_mask(az, el, radius_deg: float, chunk: int = 2048) -> np.ndarray:
     stretch as elevation rises and azimuth cells crowd together. Frames with no drone get
     an all-zero mask.
     """
-    from .config import GRID_SHAPE
-
     dirs = directions()                                          # (D, 3)
     az, el = np.asarray(az, float), np.asarray(el, float)
     out = np.zeros((len(az),) + GRID_SHAPE, dtype=np.uint8)

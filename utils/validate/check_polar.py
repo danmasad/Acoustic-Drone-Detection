@@ -42,9 +42,10 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import beamform, polar                                  # noqa: E402
-from src.config import (ANGULAR_THRESHOLD, AZ, CHUNK, EL, GRID_SHAPE,      # noqa: E402
+from src.config import (ANGULAR_THRESHOLD, AZ, C, CHUNK, EL, GRID_SHAPE,   # noqa: E402
                         MIC_SUBSETS, MODEL_BAND, SR, segments)
-from src.geometry import angular_distance, directions, mic_positions       # noqa: E402
+from src.geometry import (angular_distance, directions, mic_positions,     # noqa: E402
+                          to_angles, unit_vectors)
 from src.labels import target_mask as rect_mask                   # noqa: E402
 from src.models import decode_mask                                # noqa: E402
 
@@ -158,10 +159,9 @@ def main() -> int:
     pos = mic_positions(seg.align)[channels]
     native_err, prominence = [], []
     for a_deg, e_deg in zip(probe_az, probe_el):
-        a, e = np.radians(a_deg), np.radians(e_deg)
-        src = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+        src = unit_vectors(a_deg, e_deg)
         # A unit-amplitude plane wave from src, sampled at each microphone's own delay.
-        S = np.exp(2j * np.pi * freqs[:, None] * (pos @ src / 343.0)[None, :]).T
+        S = np.exp(2j * np.pi * freqs[:, None] * (pos @ src / C)[None, :]).T
         X = torch.from_numpy(S[None].astype(np.complex64))
 
         # Both paths standardize before the disc is masked, exactly as `data.to_maps` does, so
@@ -172,10 +172,7 @@ def main() -> int:
         res = proj((raw_r - raw_r.mean()) / raw_r.std()).sum(1).squeeze(0)
 
         k = int(nat.flatten().masked_fill(~valid, -1e9).argmax())
-        v = nd.steering_dirs[k]
-        native_err.append(angular_distance(np.degrees(np.arctan2(v[1], v[0])),
-                                           np.degrees(np.arcsin(np.clip(v[2], -1, 1))),
-                                           a_deg, e_deg))
+        native_err.append(angular_distance(*to_angles(nd.steering_dirs[k]), a_deg, e_deg))
         # Prominence: the peak minus the sidelobe floor 15-45 degrees away, in standard
         # deviations. Blur moves energy out of the peak and into its neighbourhood, so it costs
         # prominence whether or not it moves the argmax.

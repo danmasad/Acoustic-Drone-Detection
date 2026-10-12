@@ -32,13 +32,13 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import metrics, predict                              # noqa: E402
-from src.config import ANGULAR_THRESHOLD, pred_file, run_dir, table_file  # noqa: E402
+from src.config import ANGULAR_THRESHOLD, pred_file, run_dir, run_id, table_file  # noqa: E402
 
 SPLIT = "test_2"
 SEEDS = (0, 1, 2)
-PAIRS = {"all24 K=1": ("all24_K1_w32_b16_wce", "all24"),
-         "device3 K=1": ("device3_K1_w32_b16_wce", "device3"),
-         "device3 K=9": ("device3_K9_w32_b16_wce", "device3")}
+PAIRS = {"all24 K=1": (run_id("all24", 1, seed=None), "all24"),      # seedless prefixes
+         "device3 K=1": (run_id("device3", 1, seed=None), "device3"),
+         "device3 K=9": (run_id("device3", 9, seed=None), "device3")}
 QUANTILES = np.concatenate([np.linspace(0.0, 0.95, 20), [0.97, 0.98, 0.99, 0.995, 0.999]])
 FOLD_BLOCK = 300                       # frames: 30 s
 RANGE_BINS = tuple(zip(metrics.DISTANCE_BINS[:-1], metrics.DISTANCE_BINS[1:]))

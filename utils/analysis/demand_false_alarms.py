@@ -27,6 +27,7 @@ per-channel detector reads one microphone at a time. The map model cannot be sco
 all, and faking it by replicating one channel 24 times would manufacture a spatial pattern that
 no real source produces.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -186,6 +187,8 @@ def main(run_id: str = "detector_K1_w32_s0_full", level_match: bool = True) -> i
 
 
 if __name__ == "__main__":
-    a = [x for x in sys.argv[1:] if not x.startswith("--")]
-    raise SystemExit(main(run_id=a[0] if a else "detector_K1_w32_s0_full",
-                          level_match="--raw-level" not in sys.argv))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("run_id", nargs="?", default="detector_K1_w32_s0_full")
+    p.add_argument("--raw-level", action="store_true", help="skip level matching")
+    a = p.parse_args()
+    raise SystemExit(main(run_id=a.run_id, level_match=not a.raw_level))

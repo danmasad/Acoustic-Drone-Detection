@@ -12,19 +12,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import ANGULAR_THRESHOLD, FIGURES, pred_file        # noqa: E402
-from src.geometry import angular_distance                          # noqa: E402
-from utils.plots.plot_angular_error_hemisphere import orthonormal   # noqa: E402
+from src.config import ANGULAR_THRESHOLD, FIGURES, pred_file, run_id    # noqa: E402
+from src.geometry import angular_distance, unit_vectors                 # noqa: E402
+from utils.plots.hemisphere import (BG, CX, DANGER as MISS, FG, H, MUTED,  # noqa: E402
+                                    SUCCESS as HIT, W, circle_xy, draw_wire, project,
+                                    setup_axes)
 
-DUMP = pred_file("device3_K1_w32_b16_wce_s0_test_2_causal")
+DUMP = pred_file(f"{run_id('device3', 1)}_test_2_causal")
 SEG_NAME = "Mar_18_2025_f2_drone"
 YAW0 = 50.0
 TRAIL_S = 100.0
-BG, FG, MUTED, BORDER = "#0a0a0a", "#f5f5f4", "#a8a29e", "#3f3f46"
-BLUE, HEAD = "#60a5fa", "#f8fafc"
-HIT, MISS = "#4ade80", "#f87171"
+HEAD = "#f8fafc"
 NEAR, FAR = np.array([56, 189, 248]) / 255, np.array([251, 146, 60]) / 255
-W, H, CX, CY, SCALE, PITCH = 736.0, 500.0, 368.0, 278.0, 188.0, np.radians(22)
 
 
 def load_flight():
@@ -38,68 +37,11 @@ def load_flight():
     return az, np.clip(el, 0, 89.5), r, t, paz, pel
 
 
-def sph_many(az, el):
-    a, e = np.radians(az), np.radians(el)
-    return np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], 1)
-
-
-def rotate(p, yaw):
-    c, s = np.cos(yaw), np.sin(yaw)
-    x, y, z = p[..., 0] * c - p[..., 1] * s, p[..., 0] * s + p[..., 1] * c, p[..., 2]
-    cp, sp = np.cos(PITCH), np.sin(PITCH)
-    return np.stack([x, y * cp - z * sp, y * sp + z * cp], -1)
-
-
-def project(p, yaw):
-    r = rotate(np.asarray(p, float), yaw)
-    k = SCALE * (1.35 / (1.35 - r[..., 1] * 0.45))
-    return CX + r[..., 0] * k, CY - r[..., 2] * k
-
-
-def circle_xy(u, rad_deg, yaw, n=72):
-    a = np.radians(rad_deg)
-    e1, e2 = orthonormal(u)
-    t = np.linspace(0, 2 * np.pi, n)
-    pts = np.cos(a) * u + np.sin(a) * (np.cos(t)[:, None] * e1 + np.sin(t)[:, None] * e2)
-    x, y = project(pts, yaw)
-    return np.column_stack([x, y])
-
-
 def range_rgba(r):
     t = np.clip((np.asarray(r, float) - 10.0) / 140.0, 0, 1)[:, None]
     rgb = (1 - t) * NEAR + t * FAR
     a = np.full((len(r), 1), 0.95)
     return np.hstack([rgb, a])
-
-
-def draw_wire(ax, yaw):
-    ax.set_xlim(0, W)
-    ax.set_ylim(H, 0)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    ax.set_facecolor(BG)
-    for i in range(12):
-        a = i / 12 * 2 * np.pi
-        e = np.linspace(0, np.pi / 2, 17)
-        pts = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], 1)
-        x, y = project(pts, yaw)
-        ax.plot(x, y, color=BORDER, lw=1.0, solid_capstyle="round")
-    for j in range(1, 6):
-        e = j / 6 * np.pi / 2
-        a = np.linspace(0, 2 * np.pi, 73)
-        pts = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.full_like(a, np.sin(e))], 1)
-        x, y = project(pts, yaw)
-        ax.plot(x, y, color=BORDER, lw=1.0)
-    hz = np.linspace(0, 2 * np.pi, 73)
-    hpts = np.stack([np.cos(hz), np.sin(hz), np.zeros_like(hz)], 1)
-    hx, hy = project(hpts, yaw)
-    ax.fill(hx, hy, facecolor="#171717", edgecolor=FG, lw=1.5, alpha=0.92, zorder=0)
-    ox, oy = project(np.array([0.0, 0.0, 0.0]), yaw)
-    zx, zy = project(np.array([0.0, 0.0, 1.05]), yaw)
-    ax.plot([ox, zx], [oy, zy], color=MUTED, lw=1.0)
-    ax.scatter([ox], [oy], s=28, c=FG, zorder=6)
-    ax.text(zx + 8, zy - 4, "zenith", color=MUTED, fontsize=9, va="bottom")
-    ax.text(ox + 10, oy + 16, "array", color=FG, fontsize=9, va="top")
 
 
 def slerp(a, b, w):
@@ -136,8 +78,8 @@ def main() -> int:
 
     az, el, rng, t, paz, pel = load_flight()
     yaw = np.radians(YAW0)
-    xyz = sph_many(az, el)
-    pxyz = sph_many(paz, np.clip(pel, 0, 89.5))
+    xyz = unit_vectors(az, el)
+    pxyz = unit_vectors(paz, np.clip(pel, 0, 89.5))
     xs, ys = project(xyz, yaw)
     pxs, pys = project(pxyz, yaw)
     xy = np.column_stack([xs, ys])
@@ -185,11 +127,7 @@ def main() -> int:
     def draw(i):
         ax.clear()
         ax.imshow(bg, extent=(0, W, H, 0), origin="upper", interpolation="nearest", zorder=0)
-        ax.set_xlim(0, W)
-        ax.set_ylim(H, 0)
-        ax.set_aspect("equal")
-        ax.axis("off")
-        ax.set_facecolor(BG)
+        setup_axes(ax)
         u = i / max(n - 1, 1) * (len(xy) - 1)
         k0 = int(np.floor(u))
         k1 = min(k0 + 1, len(xy) - 1)

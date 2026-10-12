@@ -26,22 +26,10 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
                 valid: torch.Tensor | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Mask logits -> one direction per frame, in degrees.
 
-    `dirs` supplies one unit vector per map cell and switches the decoder to a layout other
-    than the rectangular elevation-by-azimuth grid — the polar disc of `src.polar`. Without it
-    the rectangular grid is assumed, and the azimuth axis is treated as circular. `valid` marks
-    cells that describe no direction at all, which only the disc has.
-
-    Two decoders, and the choice turns out to matter more than most architecture decisions:
-
-    - `argmax`: the brightest pixel. Simple, but quantized to the 4 degree grid and decided by
-      a single pixel, so one bright artefact anywhere in the map wins outright.
-    - `centroid`: the paper's post-processing (their section 3) — threshold the sigmoid at 0.5,
-      erode with a 3x3 kernel, fall back to the unthresholded mask if erosion empties it, then
-      take the centroid of what remains. Averaging over the activated region is robust to
-      speckle, and the answer is continuous rather than grid-quantized.
-
-    The centroid is taken over unit vectors rather than over azimuth degrees, because azimuth
-    wraps: the mean of 179 and -179 is 180, not 0.
+    `argmax` is the brightest pixel, quantized to the grid. `centroid` is the paper's rule:
+    threshold at 0.5, erode 3x3, fall back to the unthresholded mask if that empties it, then
+    average unit vectors (not azimuth degrees, which wrap). `dirs` gives one unit vector per
+    cell for a non-rectangular layout (the disc in `src.polar`); `valid` marks its dead cells.
     """
     p = torch.sigmoid(logits)
     B, n_el, n_az = p.shape
@@ -144,15 +132,9 @@ class UNet(nn.Module):
             c = ch
         self.drop = nn.Dropout2d(dropout)
         self.mask_head = nn.Conv2d(c, 1, 1)
-        # Mean *and* max pooling: a drone is a focused peak, and averaging alone throws away
-        # exactly the peakiness that distinguishes it from diffuse wind noise.
-        #
-        # LeakyReLU, not ReLU. At lr 5e-3 the plain-ReLU version of this head died outright in
-        # the all24 seed-0 run: every one of the 128 units sat at a negative pre-activation for
-        # every input (mean -7.6, max -0.50), so the logit was frozen at the output bias and
-        # AUROC read exactly 0.500 from epoch 0. A dead ReLU layer passes zero gradient and can
-        # never recover, and a single hidden layer gives it no second path. A small negative
-        # slope keeps gradient alive at no cost to the mask branch.
+        # Mean and max pooling: averaging alone discards the peakiness that separates a drone
+        # from diffuse wind. LeakyReLU because the plain-ReLU head died in the all24 seed-0 run
+        # (AUROC pinned at 0.500 from epoch 0). docs/design_notes.md section 18.
         self.presence_head = nn.Sequential(nn.Flatten(), nn.Linear(chans[-1] * 4, 128),
                                            nn.LeakyReLU(0.01, inplace=True),
                                            nn.Dropout(dropout), nn.Linear(128, 1))

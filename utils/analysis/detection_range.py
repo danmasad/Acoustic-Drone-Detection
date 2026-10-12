@@ -37,26 +37,22 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import FIGURES, FRAME_SECONDS, table_file       # noqa: E402
+from src.config import FIGURES, FRAME_SECONDS, run_id, table_file  # noqa: E402
 from src.geometry import angular_distance                       # noqa: E402
-from src.metrics import DISTANCE_BINS                           # noqa: E402
+from src.metrics import DISTANCE_BINS, threshold_for_count      # noqa: E402
 from src.predict import load                                    # noqa: E402
 
 # Counts rather than rates, because with a fixed amount of negative audio only integer counts
 # of false alarms are achievable and quoting "1 per hour" would imply a resolution we lack.
 FA_COUNTS = (0, 1, 5, 10, 25)
 SEEDS = (0, 1, 2)
-MODELS = {"all24 K=1": "all24_K1_w32_b16_wce_s{s}",
-          "all24 K=5": "all24_K5_w32_b16_wce_s{s}",
-          "device3 K=1": "device3_K1_w32_b16_wce_s{s}",
-          "device3 K=5": "device3_K5_w32_b16_wce_s{s}"}
+MODELS = {"all24 K=1": run_id("all24", 1, seed="{s}"),
+          "all24 K=5": run_id("all24", 5, seed="{s}"),
+          "device3 K=1": run_id("device3", 1, seed="{s}"),
+          "device3 K=5": run_id("device3", 5, seed="{s}")}
 
 
-BINS = DISTANCE_BINS       # trimmed to the occupied bins in main(), see trim_empty
-
-
-def bin_edges(bins=None):
-    bins = BINS if bins is None else bins
+def bin_edges(bins) -> list[tuple[float, float]]:
     return list(zip(bins[:-1], bins[1:]))
 
 
@@ -79,19 +75,7 @@ def label(lo: float, hi: float) -> str:
     return f"{int(lo)}-{'inf' if not np.isfinite(hi) else int(hi)}m"
 
 
-def threshold_for_count(scores: np.ndarray, negatives: np.ndarray, count: int) -> float:
-    """Lowest threshold whose false-alarm count on the negatives is at most `count`.
-
-    Sorting the negative scores makes this exact: allowing k alarms means sitting just above
-    the (k+1)-th largest negative score.
-    """
-    neg = np.sort(scores[negatives])[::-1]
-    if count >= len(neg):
-        return -np.inf
-    return float(np.nextafter(neg[count], np.inf))
-
-
-def recall_by_range(pred: dict, thr: float, bins=None) -> list[dict]:
+def recall_by_range(pred: dict, thr: float, bins) -> list[dict]:
     d = pred["has_drone"].astype(bool)
     fired = pred["score"] >= thr
     r = np.asarray(pred["range_m"], float)
@@ -103,7 +87,7 @@ def recall_by_range(pred: dict, thr: float, bins=None) -> list[dict]:
     return out
 
 
-def audibility(pred: dict, bins=None) -> dict:
+def audibility(pred: dict, bins) -> dict:
     """Fraction of drone frames whose beamformed peak is inside the ambient distribution."""
     d = pred["has_drone"].astype(bool)
     peak = np.asarray(pred["peak_db"], float)
@@ -122,17 +106,12 @@ def audibility(pred: dict, bins=None) -> dict:
             "below_p95_overall": float((peak[d] < neg_p95).mean())}
 
 
-def localization_when_audible(pred: dict, neg_p95: float, bins=None) -> dict:
+def localization_when_audible(pred: dict, neg_p95: float, bins) -> dict:
     """Direction accuracy over all positives and over the energy-separable ones only.
 
-    Reported as a pair, always: quoting only the loud subset selects the frames we like, and
-    quoting only the pooled number credits the model for frames it had no cue in.
-
-    The result is not the expected one. The loud subset is concentrated under 30 m, and that is
-    where the network is *worst* — 7.0 degrees median against 4.5 at 30-60 m in every seed. A
-    plausible cause is that our steering vectors assume a plane wave, which a source a few
-    metres from a 2 m array is not, so the near field breaks the beamformer's own model. The
-    by-range column is printed alongside so this is visible rather than buried in an average.
+    Always a pair: the loud subset alone selects the frames we like, the pooled number alone
+    credits frames with no cue. The loud frames are the near ones, where the network is worst
+    (plane-wave steering breaks in the near field); see docs/design_notes.md section 25.
     """
     d = pred["has_drone"].astype(bool)
     err = angular_distance(pred["pred_az"][d], pred["pred_el"][d],
@@ -157,18 +136,17 @@ def localization_when_audible(pred: dict, neg_p95: float, bins=None) -> dict:
 def main(split: str = "test_2") -> int:
     print(__doc__.split("\n\n")[0])
     base = {s: load(f"baseline_{s}_{split}") for s in ("all24", "device3")}
-    global BINS
-    BINS = trim_empty(base["all24"])
+    bins = trim_empty(base["all24"])
     n_neg = int((~base["all24"]["has_drone"].astype(bool)).sum())
     neg_hours = n_neg * FRAME_SECONDS / 3600.0
     print(f"\n{split}: {n_neg} no-drone frames = {n_neg * FRAME_SECONDS / 60:.1f} min, so one "
           f"false alarm is {1 / neg_hours:.1f}/h and nothing finer is measurable.\n")
 
     # --- audibility ---------------------------------------------------------------------
-    results = {"split": split, "n_negative": n_neg, "bins": list(BINS),
+    results = {"split": split, "n_negative": n_neg, "bins": list(bins),
                "audibility": {}, "detection": {}, "localization": {}}
     for subset, pred in base.items():
-        a = audibility(pred)
+        a = audibility(pred, bins)
         results["audibility"][subset] = a
         print(f"Energy separability on {subset}: ambient peak median {a['neg_median_db']:.1f} dB,"
               f" 95th percentile {a['neg_p95_db']:.1f} dB")
@@ -186,9 +164,9 @@ def main(split: str = "test_2") -> int:
     for name, template in MODELS.items():
         runs = [template.format(s=s) for s in SEEDS]
         preds = []
-        for run_id in runs:
+        for run in runs:
             try:
-                preds.append(load(f"{run_id}_{split}_causal"))
+                preds.append(load(f"{run}_{split}_causal"))
             except FileNotFoundError:
                 pass
         if not preds:
@@ -200,14 +178,14 @@ def main(split: str = "test_2") -> int:
         key = {(s, f): i for i, (s, f) in enumerate(zip(base[subset]["seg"],
                                                         base[subset]["frame"]))}
         print(f"{name}: recall by range, threshold set on no-drone frames only")
-        print(f"  {'budget':<12}" + "".join(f"{label(lo, hi):>10}" for lo, hi in bin_edges()))
+        print(f"  {'budget':<12}" + "".join(f"{label(lo, hi):>10}" for lo, hi in bin_edges(bins)))
         rows = {}
         for count in FA_COUNTS:
             curves = []
             for pred in preds:
                 thr = threshold_for_count(pred["score"], ~pred["has_drone"].astype(bool),
                                           count)
-                curves.append([b["recall"] for b in recall_by_range(pred, thr)])
+                curves.append([b["recall"] for b in recall_by_range(pred, thr, bins)])
             mean = np.nanmean(curves, 0)
             rows[count] = {"per_hour": count / neg_hours, "recall": mean.tolist(),
                            "sd": np.nanstd(curves, 0, ddof=1).tolist() if len(curves) > 1
@@ -215,7 +193,7 @@ def main(split: str = "test_2") -> int:
             print(f"  {f'{count / neg_hours:.0f}/h':<12}"
                   + "".join(f"{v * 100:>9.0f}%" for v in mean))
         results["detection"][name] = {"runs": runs, "by_budget": rows,
-                                      "n_bins": [b["n"] for b in recall_by_range(preds[0], 0)]}
+                                      "n_bins": [b["n"] for b in recall_by_range(preds[0], 0, bins)]}
 
         # Per-frame recall reads as a catastrophe and is the wrong unit for an alarm. A drone
         # overflies for tens of seconds, so what matters is how long until the first frame
@@ -225,13 +203,14 @@ def main(split: str = "test_2") -> int:
         wait = FRAME_SECONDS / np.maximum(mid, 1e-9)
         print(f"  at {rows[10]['per_hour']:.0f} false alarms/h, mean wait for a first alarm "
               f"while the drone is present: "
-              + ", ".join(f"{label(*b)} {w:.1f}s" for b, w in zip(bin_edges()[:3], wait)))
+              + ", ".join(f"{label(*b)} {w:.1f}s" for b, w in zip(bin_edges(bins)[:3], wait)))
 
         loc = []
         for pred in preds:
             idx = np.array([key[(s, f)] for s, f in zip(pred["seg"], pred["frame"])])
             loc.append(localization_when_audible({**pred, "peak_db": peak[idx]},
-                                                 results["audibility"][subset]["neg_p95_db"]))
+                                                 results["audibility"][subset]["neg_p95_db"],
+                                                 bins))
         results["localization"][name] = loc
         by_range = np.array([[b["hit_10deg"] for b in l["by_range"]] for l in loc])
         print(f"  within 10 deg: {np.mean([l['hit_10deg_all'] for l in loc]) * 100:.1f}% over "
@@ -240,7 +219,7 @@ def main(split: str = "test_2") -> int:
               f"loud frames are the near ones, and the near field is where we are worst")
         print(f"  by range:    "
               + "  ".join(f"{label(*b)} {v * 100:.0f}%"
-                          for b, v in zip(bin_edges(), np.nanmean(by_range, 0))) + "\n")
+                          for b, v in zip(bin_edges(bins), np.nanmean(by_range, 0))) + "\n")
 
     path = table_file("detection_range.json")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +235,7 @@ def plot(results: dict, split: str) -> None:
     import matplotlib.pyplot as plt
 
     fig, (ax, ax2) = plt.subplots(1, 2, figsize=(10, 3.6))
-    bins = results.get("bins") or list(BINS)
+    bins = results["bins"]
     centres = [(lo + (hi if np.isfinite(hi) else lo + 60)) / 2 for lo, hi in bin_edges(bins)]
     budget = 10
     rate = None

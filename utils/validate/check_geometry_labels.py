@@ -16,14 +16,13 @@ import time
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import butter, filtfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import AZ, CHUNK, EL, MODEL_BAND, SR, segments          # noqa: E402
 from src.geometry import mic_positions, steering                        # noqa: E402
 from src.labels import frame_labels                                     # noqa: E402
-from src.stft_cache import FILTER_BAND, FILTER_ORDER, SegmentAudio      # noqa: E402
+from src.stft_cache import SegmentAudio, bandpass                        # noqa: E402
 
 N_FRAMES = 150            # 15 s, the same slice the original check used
 EXPECTED = {"az_median": 1.6, "el_median": 5.1, "within10": 0.91}
@@ -40,9 +39,7 @@ def main() -> int:
     n = min(N_FRAMES, audio.n_frames, len(labels["az"]))
     print(f"audio available {audio.n_frames} frames, using {n}")
 
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
-    blk = filtfilt(b, a, audio.read(0, n * CHUNK), axis=0).reshape(n, CHUNK, -1)
+    blk = bandpass(audio.read(0, n * CHUNK)).reshape(n, CHUNK, -1)
 
     freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
     sel = (freqs >= MODEL_BAND[0]) & (freqs <= MODEL_BAND[1])

@@ -20,6 +20,7 @@ across runs, which is far more sensitive than comparing two pooled averages.
   saturation is the physically expected answer, and having measured it is worth more than
   another grid cell would have been.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -28,18 +29,15 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import FIGURES, table_file                       # noqa: E402
+from src.config import FIGURES, run_id, table_file               # noqa: E402
 from src.metrics import angular_errors                           # noqa: E402
 from src.predict import load                                     # noqa: E402
+from src.train import history_order as order_of                  # noqa: E402
 
 SUBSETS = ("all24", "device3", "best6")
 SEEDS = (0, 1, 2)
 NEAR = 60.0            # metres; inside this a 5-frame stack spans more than one grid cell
 K = 5                  # the default cell: nine trained K=5 checkpoints, depths 1 to 5
-
-
-def order_of(j: int, K: int) -> str:
-    return "causal" if j >= K else f"freeze{j}"
 
 
 def score(pred: dict) -> dict:
@@ -60,15 +58,15 @@ def main(split: str = "test_2", K: int = K, subsets: tuple[str, ...] = SUBSETS) 
     missing = []
     for subset in subsets:
         for seed in SEEDS:
-            run_id = f"{subset}_K{K}_w32_b16_wce_s{seed}"
+            run = run_id(subset, K, seed=seed)
             per_depth = {}
             for j in DEPTHS:
                 try:
-                    per_depth[j] = score(load(f"{run_id}_{split}_{order_of(j, K)}"))
+                    per_depth[j] = score(load(f"{run}_{split}_{order_of(j, K)}"))
                 except FileNotFoundError:
-                    missing.append(f"{run_id} @ {order_of(j, K)}")
+                    missing.append(f"{run} @ {order_of(j, K)}")
             if len(per_depth) == len(DEPTHS):
-                curves[run_id] = per_depth
+                curves[run] = per_depth
     if missing:
         orders = " ".join(order_of(j, K) for j in DEPTHS[:-1])
         print(f"\nmissing {len(missing)} dumps, e.g. {missing[0]}; "
@@ -116,7 +114,7 @@ def main(split: str = "test_2", K: int = K, subsets: tuple[str, ...] = SUBSETS) 
         k1 = []
         for seed in SEEDS:
             try:
-                k1.append(score(load(f"{subset}_K1_w32_b16_wce_s{seed}_{split}_causal"))
+                k1.append(score(load(f"{run_id(subset, 1, seed=seed)}_{split}_causal"))
                           ["hit_10deg"])
             except FileNotFoundError:
                 pass
@@ -180,8 +178,8 @@ def plot(curves: dict, split: str, DEPTHS: tuple[int, ...], K: int, label: str =
 
     fig, ax = plt.subplots(figsize=(5.2, 3.6))
     by_subset: dict[str, list] = {}
-    for run_id, c in curves.items():
-        by_subset.setdefault(run_id.split("_K")[0], []).append(
+    for run, c in curves.items():
+        by_subset.setdefault(run.split("_K")[0], []).append(
             [100 * c[j]["hit_10deg"] for j in DEPTHS])
     for subset, rows in by_subset.items():
         a = np.array(rows)
@@ -200,9 +198,9 @@ def plot(curves: dict, split: str, DEPTHS: tuple[int, ...], K: int, label: str =
 
 
 if __name__ == "__main__":
-    a = sys.argv[1:]
-    k = int(a[a.index("--K") + 1]) if "--K" in a else K
-    subs = tuple(a[a.index("--subsets") + 1].split(",")) if "--subsets" in a else SUBSETS
-    positional = [x for x in a if not x.startswith("--") and x not in
-                  {str(k), ",".join(subs)}]
-    raise SystemExit(main(positional[0] if positional else "test_2", k, subs))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("split", nargs="?", default="test_2")
+    p.add_argument("--K", type=int, default=K)
+    p.add_argument("--subsets", default=",".join(SUBSETS), help="comma-separated")
+    a = p.parse_args()
+    raise SystemExit(main(a.split, a.K, tuple(a.subsets.split(","))))

@@ -12,8 +12,6 @@ Run: .venv/bin/python utils/validate/check_arrays.py
 import sys
 from pathlib import Path
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import arrays                                                  # noqa: E402

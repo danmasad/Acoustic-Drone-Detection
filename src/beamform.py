@@ -9,7 +9,7 @@ runtime flags.
 import numpy as np
 import torch
 
-from .config import GRID_SHAPE, MODEL_BAND, N_SUBBANDS
+from .config import C, GRID_SHAPE, MODEL_BAND, N_SUBBANDS
 from .geometry import directions, mic_positions
 
 _CACHE: dict = {}
@@ -65,7 +65,7 @@ class Beamformer:
         self.sel = sel
         pos = mic_positions(align)[self.channels]
         dirs = directions() if dirs is None else dirs
-        tau = dirs @ pos.T / 343.0                                   # (D, M)
+        tau = dirs @ pos.T / C                                       # (D, M)
         W = np.exp(-2j * np.pi * freqs[sel][:, None, None] * tau[None])
 
         # (F, M, D) so steering is a batched matmul over the frequency axis.

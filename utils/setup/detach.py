@@ -7,15 +7,15 @@ keeps the Mac awake for the duration, since these runs are hours long.
 
     .venv/bin/python utils/setup/detach.py logs/grid.log -- .venv/bin/python -u -m src.train --K 5
 """
+import argparse
 import subprocess
-import sys
 from pathlib import Path
 
 
 def launch(log_path: str, cmd: list[str]) -> int:
     log = Path(log_path)
     log.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(log, "w")
+    handle = open(log, "w")          # inherited by the child; it closes when the child exits
     proc = subprocess.Popen(["caffeinate", "-is", *cmd], stdout=handle,
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             start_new_session=True)
@@ -23,11 +23,12 @@ def launch(log_path: str, cmd: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    if len(args) < 2:
-        sys.exit(__doc__)
-    log_path, cmd = args[0], args[1:]
-    if cmd[0] == "--":
-        cmd = cmd[1:]
-    pid = launch(log_path, cmd)
-    print(f"pid {pid}, logging to {log_path}")
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("log", help="file that receives stdout and stderr")
+    p.add_argument("cmd", nargs=argparse.REMAINDER, help="command to run, after --")
+    a = p.parse_args()
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        p.error("no command given")
+    print(f"pid {launch(a.log, cmd)}, logging to {a.log}")

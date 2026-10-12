@@ -6,6 +6,7 @@ trade-off between missing a drone and crying wolf; precision-recall and false al
 hour do.
 """
 import numpy as np
+from scipy.stats import rankdata
 
 from .config import AZ, EL, FRAME_SECONDS, HIT_THRESHOLDS
 from .geometry import angular_distance
@@ -43,18 +44,18 @@ def auroc(scores, labels) -> float:
     n_pos, n_neg = labels.sum(), (~labels).sum()
     if n_pos == 0 or n_neg == 0:
         return float("nan")
-    ranks = np.empty(len(scores), float)
-    order = np.argsort(scores)
-    s = scores[order]
-    # average ranks within ties, so a constant predictor scores exactly 0.5
-    i = 0
-    while i < len(s):
-        j = i
-        while j + 1 < len(s) and s[j + 1] == s[i]:
-            j += 1
-        ranks[order[i:j + 1]] = 0.5 * (i + j) + 1
-        i = j + 1
+    ranks = rankdata(scores, method="average")   # ties averaged: a constant predictor scores 0.5
     return float((ranks[labels].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def threshold_for_count(scores, negatives, count: int) -> float:
+    """Lowest threshold that lets at most `count` of the `negatives` through.
+
+    Exact on sorted negative scores: allowing k alarms means sitting just above the (k+1)-th
+    largest negative score.
+    """
+    neg = np.sort(np.asarray(scores, float)[np.asarray(negatives, bool)])[::-1]
+    return -np.inf if count >= len(neg) else float(np.nextafter(neg[count], np.inf))
 
 
 def specificity_at_recall(scores, labels, recall: float = 0.95) -> float:

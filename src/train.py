@@ -14,18 +14,15 @@ import torch
 
 from . import beamform, metrics
 from . import polar as polar_grid
-from .config import AZ, EL, MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, run_dir
+from .config import MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, run_dir
 from .data import SplitData, input_stats, to_maps
 from .models import Loss, UNet, decode_mask
 
 EARLY = {"patience": 10, "min_delta": 0.001, "min_epochs": 15, "max_epochs": 60}
 
-# The plan said monitor test-2 AUPRC. Changed after the first run, on two grounds: the split
-# is 81% positive, so AUPRC starts near 0.81 and barely moves, and the headline claim is
-# about direction rather than detection. Hit rate at the dataset's own 10 degree tolerance is
-# bounded, stable, and the number the claim is actually made in. Everything else is still
-# logged every epoch, and the monitor is identical for every condition, which is what
-# comparability requires.
+# Hit rate at the dataset's 10 degree tolerance, not AUPRC: the split is 81% positive so
+# AUPRC barely moves, and the claim is about direction. Same monitor for every condition.
+# docs/design_notes.md section 29.
 MONITOR = "hit_10deg"
 
 
@@ -33,7 +30,7 @@ def git_sha() -> str:
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
 
 
@@ -52,28 +49,23 @@ def beamformer_factory(data: SplitData, subbands: int, device, dirs=None, grid_s
     return get
 
 
-# Test-time interventions on the frame stack, all applied to the same trained weights. Each
-# removes one thing and leaves the rest, so the differences separate mechanisms that "K=5 beats
-# K=1" alone cannot:
-#   freeze   the current frame repeated K times -> the stack carries no history at all, so any
-#            remaining gain over K=1 is extra input channels and parameters, not time
-#   shuffle  the same K frames in random order -> removes order, keeps history
-#   reverse  time flipped -> removes order in the one way that is still a smooth trajectory
-# Notes section 13 predicts persistence dominates beyond ~70 m, where the true peak moves less
-# than one grid cell per stack. Persistence survives shuffling, so a small shuffle effect next
-# to a large freeze effect is the expected result, not a failure.
+# Test-time interventions on the frame stack, same trained weights. `freeze` repeats the
+# current frame K times (no history), `shuffle` keeps history but drops order, `reverse`
+# flips time. docs/design_notes.md section 13.
 ORDERS = ("causal", "freeze", "shuffle", "reverse")
+
+
+def history_order(j: int, K: int) -> str:
+    """The `reorder` name for a history depth of j frames out of K: `freeze{j}`, or `causal`
+    when nothing is frozen."""
+    return "causal" if j >= K else f"freeze{j}"
 
 
 def reorder(X: torch.Tensor, order: str, rng) -> torch.Tensor:
     """(B, K, M, F) -> the same frames under a test-time intervention on the K axis.
 
-    `freeze{j}` generalizes `freeze` to a *history depth*: the last j frames stay real and the
-    earlier slots are filled with a copy of the oldest kept frame, so j=1 is exactly `freeze`
-    and j=K is exactly `causal`. Sweeping j turns one trained model into a curve of accuracy
-    against how far back it is allowed to see, which is the only way to ask whether the
-    benefit of history saturates without training a second model at a different K — where
-    more input channels and more parameters would confound the answer.
+    `freeze{j}` keeps the last j frames real and fills the earlier slots with the oldest kept
+    frame, so j=1 is `freeze` and j=K is `causal`. Section 26 of the notes.
     """
     K = X.shape[1]
     if order == "causal" or K == 1:

@@ -23,14 +23,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from scipy.signal import butter, filtfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.beamform import Beamformer                                       # noqa: E402
 from src.config import CHUNK, MIC_SUBSETS, MODEL_BAND, SR, segments       # noqa: E402
-from src.stft_cache import (FILTER_BAND, FILTER_ORDER, SegmentAudio,      # noqa: E402
-                            load_cache)
+from src.stft_cache import SegmentAudio, bandpass, load_cache             # noqa: E402
 
 MARGIN_S = 20.0        # discard this much before takeoff: motor spin-up, handling, chatter
 WINDOW_S = 60.0        # how much pre-takeoff audio to characterize
@@ -47,8 +45,6 @@ def stats_from_spectra(X: np.ndarray, bf: Beamformer) -> tuple[np.ndarray, np.nd
 
 def main() -> None:
     channels = MIC_SUBSETS["all24"]
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
     freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
     sel_cache = (freqs >= 200.0) & (freqs <= 4000.0)
 
@@ -67,7 +63,7 @@ def main() -> None:
         span = min(WINDOW_S, available)
         first = -int(round((span + MARGIN_S) * SR))
         n = int(span * SR) // CHUNK
-        blk = filtfilt(b, a, audio.read(first, n * CHUNK), axis=0).reshape(n, CHUNK, -1)
+        blk = bandpass(audio.read(first, n * CHUNK)).reshape(n, CHUNK, -1)
         X = np.fft.rfft(blk, axis=1)[:, sel_cache].transpose(0, 2, 1).astype(np.complex64)
 
         stft, meta = load_cache(seg)

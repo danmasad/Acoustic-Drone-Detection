@@ -11,17 +11,18 @@ because a flat array cannot separate an elevation from its mirror image.
 Run: .venv/bin/python utils/search/search_mic_subsets.py
 """
 import itertools
-import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
-C = 343.0
-REPO = Path(__file__).resolve().parents[2]
-SESSION = REPO / "data/test_1/Oct_11_2024/flight_5/alignment_params.json"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-AZ = np.arange(-180, 181, 4)
-EL = np.arange(0, 91, 4)
+from src.config import C, REPO, SESSION_DIRS, load_align                  # noqa: E402
+from src.geometry import coplanar_thickness as flatness                   # noqa: E402
+from src.geometry import directions, mic_positions, unit_vectors          # noqa: E402
+
+SESSION = SESSION_DIRS[3]            # Oct 11 flight 5, the test_1 geometry
 BAND = np.linspace(200.0, 2200.0, 16)
 EXCLUDE_DEG = 15.0
 MIN_FLATNESS = 0.15          # metres of spread perpendicular to the best-fit plane
@@ -43,37 +44,14 @@ NAMED = {
 }
 
 
-def mic_positions(cfg):
-    a, a2, h, r = cfg["a_"], cfg["a2_"], cfg["h_"], cfg["r_"]
-    pos = []
-    for ri in range(6):
-        for ai in range(3):
-            pos.append([r[ri] * np.cos(np.radians(a[ai])),
-                        r[ri] * np.sin(np.radians(a[ai])), h[ri]])
-    for ai in range(6):
-        pos.append([r[2] * np.cos(np.radians(a2[ai])),
-                    r[2] * np.sin(np.radians(a2[ai])), h[2]])
-    return np.array(pos)
-
-
-def directions(az_deg, el_deg):
-    az, el = np.meshgrid(np.radians(az_deg), np.radians(el_deg), indexing="ij")
-    return np.stack([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az),
-                     np.sin(el)], axis=-1).reshape(-1, 3)
-
-
-def flatness(pos):
-    return np.linalg.svd(pos - pos.mean(0), compute_uv=False)[-1]
-
-
 def per_source_terms(pos, src):
     """phi[f, d, m]: the term microphone m contributes when steering to d.
 
     Summing phi over any microphone subset gives that subset's beamformer output, so
     every subset is a masked sum of one precomputed tensor.
     """
-    dirs = directions(AZ, EL)
-    d0 = directions([src[0]], [src[1]])[0]
+    dirs = directions()
+    d0 = unit_vectors(*src)
     dtau = (dirs @ pos.T) - (d0 @ pos.T)                       # (D, M)
     phi = np.exp(-2j * np.pi * BAND[:, None, None] * dtau[None] / C).astype(np.complex64)
     ang = np.degrees(np.arccos(np.clip(dirs @ d0, -1, 1)))
@@ -141,7 +119,7 @@ def named_scores(pos):
 
 
 if __name__ == "__main__":
-    pos = mic_positions(json.load(open(SESSION))["mic_array"])
+    pos = mic_positions(load_align(SESSION))
     print(f"session: {SESSION.relative_to(REPO)}")
     print(f"{len(SOURCES)} source directions, band {BAND[0]:.0f}-{BAND[-1]:.0f} Hz, "
           f"exclusion {EXCLUDE_DEG:.0f} deg\n")

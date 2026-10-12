@@ -16,14 +16,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import butter, filtfilt
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import AZ, CHUNK, CSV_HZ, EL, MODEL_BAND, SR, segments      # noqa: E402
 from src.geometry import mic_positions, steering                            # noqa: E402
-from src.stft_cache import (FILTER_BAND, FILTER_ORDER, SegmentAudio,        # noqa: E402
-                            load_cache)
+from src.stft_cache import SegmentAudio, bandpass, load_cache               # noqa: E402
 
 RECHECK_FRAMES = [0, 301, 705]        # 705 sits across a filtering block boundary
 N_STEER = 150                         # the same slice step 1 used
@@ -36,9 +34,7 @@ def recompute(seg, frame: int) -> np.ndarray:
     pad = CHUNK
     lo = max(0, frame * CHUNK - pad)
     hi = min(audio.n_samples, (frame + 1) * CHUNK + pad)
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
-    blk = filtfilt(b, a, audio.read(lo, hi - lo), axis=0)
+    blk = bandpass(audio.read(lo, hi - lo))
     head = frame * CHUNK - lo
     return np.fft.rfft(blk[head:head + CHUNK], axis=0).T
 

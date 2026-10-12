@@ -1,42 +1,14 @@
 """The sky as a disc instead of a rectangle.
 
-The rectangular map has two defects, and we only ever fixed one. Circular padding solved the
-azimuth seam. The pole was never addressed: at 88 degrees elevation the 91 azimuth columns
-describe directions 0.14 degrees apart, while at the horizon the same columns are 4 degrees
-apart. A 3x3 convolution therefore covers a 12 degree patch of sky near the horizon and a 0.4
-degree sliver near the zenith, so a filter that has learned what a drone looks like in one place
-is looking at something else entirely in the other.
-
-That matters here specifically because our one reproduction gap is beyond 100 m and is almost
-entirely in azimuth — 53 degrees against 11 in elevation — and azimuth is the axis the
-rectangular layout distorts.
-
-The fix is the projection a fisheye lens makes: look straight up, put the zenith at the centre
-of a square image and the horizon on the inscribed circle. Radius is elevation, angle around the
-disc is azimuth:
+Zenith at the centre of an N x N image, horizon on the inscribed circle:
 
     r = (90 - elevation) / 90        theta = azimuth
 
-Now a step of one pixel is a step of roughly the same angle everywhere, and there is no seam
-anywhere because azimuth wraps around the disc's interior rather than off its edge.
-
-Two costs, both accepted deliberately:
-
-- The corners of the square are outside the unit disc and describe no direction at all. They are
-  1 - pi/4 = 21.5% of the pixels, and they are held at zero.
-- Azimuth resolution near the zenith is now genuinely coarse rather than fictitiously fine. That
-  is the correct trade: near the zenith azimuth barely changes the direction, which is why the
-  rectangular grid's precision there was never real.
-
-`N = 46` is not a free choice. The radial axis then holds 23 cells across 90 degrees of
-elevation, exactly matching the 4 degree spacing of the rectangular grid, so the comparison
-between layouts is not confounded by resolution.
-
-One function defines the projection and everything else derives from it, which is what keeps the
-input, the target and the decoder from drifting apart: the network's input is the rectangular
-map resampled onto the disc, and the target is the *same spherical cap* rasterized directly onto
-the disc's own direction vectors — never a resampled copy of the rectangular target, which would
-blur a hard label through two interpolations.
+One pixel is then roughly the same angle everywhere, and azimuth has no seam. The corners
+(21.5% of pixels) describe no direction and are held at zero. N = 46 puts 23 radial cells
+across 90 degrees, matching the rectangular grid's 4 degree spacing. The target is the same
+spherical cap rasterized onto the disc's own direction vectors, never a resampled rectangle.
+docs/design_notes.md sections 7, 32 and 36.
 """
 import numpy as np
 import torch

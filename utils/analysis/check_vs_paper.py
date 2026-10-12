@@ -21,12 +21,11 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import AZ, EL, run_dir                                # noqa: E402
-from src.geometry import angular_distance                             # noqa: E402
+from src.config import AZ, EL, run_dir, run_id                        # noqa: E402
+from src.geometry import angular_distance, unit_vectors               # noqa: E402
 from src.metrics import angular_errors                                # noqa: E402
 from src.predict import baseline_predictions, cnn_predictions         # noqa: E402
 
@@ -43,6 +42,7 @@ STABILITY_DEG = 10.0
 
 
 def binned_mean(err: np.ndarray, range_m: np.ndarray, bins=PAPER_BINS) -> list:
+    """(mean error, frame count) per range bin; NaN where the bin is empty."""
     out = []
     for lo, hi in zip(bins[:-1], bins[1:]):
         m = (range_m >= lo) & (range_m < hi) & np.isfinite(err)
@@ -54,29 +54,19 @@ def stability_flags(az: np.ndarray, el: np.ndarray) -> np.ndarray:
     """Their detection rule: the last 3 direction estimates agree to within 10 degrees.
 
     Root-mean-square angular distance to the mean of the window, which is the spherical
-    equivalent of a standard deviation. Frames before the window fills are excluded.
+    equivalent of a standard deviation. Frames before the window fills are False.
     """
-    v = np.stack([np.cos(np.radians(el)) * np.cos(np.radians(az)),
-                  np.cos(np.radians(el)) * np.sin(np.radians(az)),
-                  np.sin(np.radians(el))], 1)
-    stable = np.zeros(len(az), bool)
-    valid = np.zeros(len(az), bool)
-    for t in range(STABILITY_WINDOW - 1, len(az)):
+    v = unit_vectors(az, el)                                   # (T, 3)
+    stable = np.zeros(len(v), bool)
+    for t in range(STABILITY_WINDOW - 1, len(v)):
         w = v[t - STABILITY_WINDOW + 1:t + 1]
         mean = w.mean(0)
-        n = np.linalg.norm(mean)
-        if n < 1e-9:
-            valid[t] = True
+        norm = np.linalg.norm(mean)
+        if norm < 1e-9:
             continue
-        mean = mean / n
-        m_az = np.degrees(np.arctan2(mean[1], mean[0]))
-        m_el = np.degrees(np.arcsin(np.clip(mean[2], -1, 1)))
-        d = angular_distance(np.degrees(np.arctan2(w[:, 1], w[:, 0])),
-                             np.degrees(np.arcsin(np.clip(w[:, 2], -1, 1))),
-                             np.full(len(w), m_az), np.full(len(w), m_el))
+        d = np.degrees(np.arccos(np.clip(w @ (mean / norm), -1.0, 1.0)))
         stable[t] = float(np.sqrt((d ** 2).mean())) <= STABILITY_DEG
-        valid[t] = True
-    return stable & valid
+    return stable
 
 
 def with_decoder(pred: dict, mode: str = "centroid") -> dict:
@@ -129,9 +119,9 @@ def main(split: str = "test_2") -> int:
     # centroid an eroded mask, we were taking the brightest pixel.
     for mode in ("argmax", "centroid"):
         for seed in (0, 1, 2):
-            run_id = f"all24_K1_w32_b16_wce_s{seed}"
-            if (run_dir(run_id) / "best.pt").exists():
-                pred = cnn_predictions(run_id, split, verbose=False)
+            run = run_id("all24", 1, seed=seed)
+            if (run_dir(run) / "best.pt").exists():
+                pred = cnn_predictions(run, split, verbose=False)
                 report(f"our U-Net, {mode} decoding (seed {seed})", "unet", split,
                        with_decoder(pred, mode))
     return 0
