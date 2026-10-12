@@ -188,7 +188,7 @@ def all_runs(pattern: str = "_w32_b16_wce_s") -> list[str]:
     from .config import RUNS
     found = []
     for group in RUNS.iterdir():
-        if not group.is_dir():
+        if not group.is_dir() or group.name.startswith("_"):
             continue
         for d in group.iterdir():
             if (d.is_dir() and not d.name.startswith("_") and pattern in d.name
