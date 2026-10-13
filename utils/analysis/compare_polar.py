@@ -1,6 +1,6 @@
 """Layout against loss, five cells, decided on the one bin the disc was built to fix.
 
-The hypothesis, from design notes section 7 and the reproduction gap in section 23. Our map is a
+The hypothesis. Our map is a
 rectangle of elevation by azimuth, which is a plate carree projection of the sky. Circular padding
 fixed its azimuth seam, but nothing fixed the other defect: near the zenith, one azimuth cell
 covers almost no solid angle, so a single learned kernel means different things at different
@@ -27,6 +27,7 @@ reported next to the seed means because both arms score the same frames in the s
 pairing removes the frame-to-frame difficulty that dominates a 374-frame bin. Everything is read
 from the per-frame dumps; no training happens here.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -36,8 +37,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import predict                                            # noqa: E402
-from src.config import FIGURES, run_dir, table_file                # noqa: E402
-from src.geometry import angular_distance                          # noqa: E402
+from src.config import FIGURES, run_dir, run_id, table_file        # noqa: E402
+from src.geometry import angular_distance, wrap180                 # noqa: E402
+from utils.analysis.significance import crossing_test              # noqa: E402
 
 PAPER_BINS = ((0, 50), (50, 100), (100, 200))
 FINE_BINS = ((0, 30), (30, 60), (60, 90), (90, 120), (120, 180))
@@ -52,19 +54,16 @@ GATE_FAR_AZIMUTH = 45.0
 
 BASELINE = "rect + wce"
 CELLS = {
-    BASELINE: "all24_K1_w32_b16_wce_s{s}",
-    "disc resampled + wce": "all24_K1_w32_b16_wce_polar_s{s}",
-    "rect + tversky": "all24_K1_w32_b16_tversky_s{s}",
-    "disc native + wce": "all24_K1_w32_b16_wce_polarn_s{s}",
-    "disc native + tversky": "all24_K1_w32_b16_tversky_polarn_s{s}",
+    BASELINE: run_id("all24", 1, seed="{s}"),
+    "disc resampled + wce": run_id("all24", 1, polar=True, seed="{s}"),
+    "rect + tversky": run_id("all24", 1, loss="tversky", seed="{s}"),
+    "disc native + wce": run_id("all24", 1, polar=True, disc="native", seed="{s}"),
+    "disc native + tversky": run_id("all24", 1, loss="tversky", polar=True, disc="native",
+                                    seed="{s}"),
 }
 # The two the legacy `polar_vs_rect.json` schema names, which `utils/analysis/unseal_test1.py` reads to
 # decide whether a disc model earns a place in the sealed-split scoring.
 LEGACY = {"rect": BASELINE, "polar": "disc resampled + wce"}
-
-
-def wrap180(d: np.ndarray) -> np.ndarray:
-    return (d + 180.0) % 360.0 - 180.0
 
 
 def errors(pred: dict) -> dict:
@@ -91,11 +90,11 @@ def by_bin(e: dict, bins, key: str, stat=np.mean) -> list:
 def collect(template: str, split: str) -> list[dict]:
     got = []
     for s in SEEDS:
-        run_id = template.format(s=s)
-        if not (run_dir(run_id) / "best.pt").exists():
+        run = template.format(s=s)
+        if not (run_dir(run) / "best.pt").exists():
             continue
-        pred = predict.cnn_predictions(run_id, split, verbose=False)
-        got.append({"run_id": run_id, **errors(pred)})
+        pred = predict.cnn_predictions(run, split, verbose=False)
+        got.append({"run_id": run, **errors(pred)})
     return got
 
 
@@ -135,8 +134,8 @@ def paired_delta(cell: list[dict], base: list[dict], key: str = "azimuth") -> li
     return out
 
 
-K9_CELLS = {"device3 K=9 rect": "device3_K9_w32_b16_wce_s{s}",
-            "device3 K=9 disc": "device3_K9_w32_b16_wce_polarn_s{s}"}
+K9_CELLS = {"device3 K=9 rect": run_id("device3", 9, seed="{s}"),
+            "device3 K=9 disc": run_id("device3", 9, polar=True, disc="native", seed="{s}")}
 
 
 def k9(split: str = "test_2") -> dict:
@@ -180,8 +179,6 @@ def k9(split: str = "test_2") -> dict:
     # worth reading. The frame-level standard errors above make the 0-50 m delta look like a
     # 5-sigma result off 6,398 frames; clustered, only 6 of its 10 crossings even agree on the
     # sign. This comparison is the clearest illustration in the project of why notes 40 exists.
-    from significance import crossing_test          # noqa: E402  (script-local by design)
-
     print("\n  the same deltas, clustered by range crossing:")
     disc_runs, rect_runs = have["device3 K=9 disc"], have["device3 K=9 rect"]
     n = min(min(len(r["azimuth"]) for r in disc_runs), min(len(r["azimuth"]) for r in rect_runs))
@@ -296,7 +293,7 @@ def main(split: str = "test_2") -> int:
             print(f"  Best of them is {best[0]} at {best[1]:.1f} deg against the baseline's "
                   f"{base_far.mean():.1f}.")
         print("  Read with the standing caveat: this bin is about 2.5% of drone frames and the "
-              "drone's beamformed peak sits below the ambient's there (notes section 25), so "
+              "drone's beamformed peak sits below the ambient's there, so "
               "neither a projection nor a loss was ever going to recover a cue the map does not "
               "contain.")
     results["gate_1"] = {"baseline_far_azimuth": float(base_far.mean()),
@@ -370,5 +367,6 @@ def plot(cells: dict, split: str) -> None:
 
 
 if __name__ == "__main__":
-    a = [x for x in sys.argv[1:] if not x.startswith("--")]
-    raise SystemExit(main(a[0] if a else "test_2"))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("split", nargs="?", default="test_2")
+    raise SystemExit(main(p.parse_args().split))

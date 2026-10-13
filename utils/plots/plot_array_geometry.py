@@ -7,32 +7,32 @@ each candidate subset, then renders two figures:
 
   figures/array_geometry.png    the array itself and three candidate subsets
   figures/array_beampattern.png response of each subset to ONE synthetic source
+  figures/array_tested.png      (--slides) every array the experiments measured, top view
 
-The second figure is the one that matters. It shows the false peaks a sparse array
-invents -- the artefacts a brightest-pixel baseline cannot reject and that the CNN plus
-temporal context is supposed to undo.
-
-Geometry comes from the session's own alignment_params.json -- the array was
+The beam-pattern figure shows the false peaks a sparse array invents -- the artefacts a
+brightest-pixel baseline cannot reject and that the CNN plus temporal context is supposed
+to undo. Geometry comes from the session's own alignment_params.json; the array was
 recalibrated between sessions, so it is never hardcoded.
 
-Run: .venv/bin/python utils/plots/plot_array_geometry.py
+Run: .venv/bin/python utils/plots/plot_array_geometry.py [--slides]
 """
-import json
-import itertools
+import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 import matplotlib
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.config import AZ, C, EL, GRID_SHAPE, MIC_SUBSETS, REPO, SESSION_DIRS, load_align  # noqa: E402
+from src.geometry import (coplanar_thickness, directions, mic_positions,  # noqa: E402
+                          spacings, steering, unit_vectors)
+
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt                                           # noqa: E402
 
-C = 343.0
-REPO = Path(__file__).resolve().parents[2]
-SESSION = REPO / "data/test_1/Oct_11_2024/flight_5/alignment_params.json"
-
-AZ = np.arange(-180, 181, 4)
-EL = np.arange(0, 91, 4)
+SESSION = SESSION_DIRS[3]                  # Oct 11 flight 5, the test_1 geometry
 BAND = np.linspace(200.0, 2200.0, 16)      # the paper's model band
 SRC_AZ, SRC_EL = 40.0, 28.0                # a plausible drone: 100 m out, 50 m up
 
@@ -52,44 +52,14 @@ SUBSETS = {
 }
 
 
-def mic_positions(cfg):
-    """24 positions: six 3-microphone rings up the tripod legs, then a flat ring of six."""
-    a, a2, h, r = cfg["a_"], cfg["a2_"], cfg["h_"], cfg["r_"]
-    pos = []
-    for ri in range(6):
-        for ai in range(3):
-            pos.append([r[ri] * np.cos(np.radians(a[ai])),
-                        r[ri] * np.sin(np.radians(a[ai])), h[ri]])
-    for ai in range(6):
-        pos.append([r[2] * np.cos(np.radians(a2[ai])),
-                    r[2] * np.sin(np.radians(a2[ai])), h[2]])
-    return np.array(pos)
-
-
-def directions(az_deg, el_deg):
-    az, el = np.meshgrid(np.radians(az_deg), np.radians(el_deg), indexing="ij")
-    return np.stack([np.cos(el) * np.cos(az), np.cos(el) * np.sin(az),
-                     np.sin(el)], axis=-1).reshape(-1, 3)
-
-
-def steering(pos, freqs, dirs):
-    tau = dirs @ pos.T / C                                       # (D, M)
-    return np.exp(-2j * np.pi * freqs[:, None, None] * tau[None]).astype(np.complex64)
-
-
 def beampattern(pos):
-    """Energy map produced by a single unit-amplitude source at (SRC_AZ, SRC_EL)."""
-    W = steering(pos, BAND, directions(AZ, EL))                  # (F, D, M)
-    src = steering(pos, BAND, directions([SRC_AZ], [SRC_EL]))     # (F, 1, M)
+    """(azimuth, elevation) energy map from a single unit-amplitude source at (SRC_AZ, SRC_EL)."""
+    W = steering(pos, BAND, directions())                        # (F, D, M)
+    src = steering(pos, BAND, unit_vectors(SRC_AZ, SRC_EL)[None])  # (F, 1, M)
     a = np.conj(src[:, 0, :])                                    # source at unit gain
     y = np.einsum("fdm,fm->fd", W, a, optimize=True)
-    e = (np.abs(y) ** 2).sum(0).reshape(len(AZ), len(EL))
+    e = (np.abs(y) ** 2).sum(0).reshape(GRID_SHAPE).T            # directions() is (el, az)
     return e / e.max()
-
-
-def spacings(pos):
-    d = [np.linalg.norm(pos[i] - pos[j]) for i, j in itertools.combinations(range(len(pos)), 2)]
-    return min(d), max(d)
 
 
 def is_threefold(pos, tol=0.02):
@@ -102,17 +72,10 @@ def is_threefold(pos, tol=0.02):
     return True
 
 
-def coplanar_thickness(pos):
-    """Smallest spread perpendicular to the best-fit plane; ~0 means no 3-D resolving power."""
-    q = pos - pos.mean(0)
-    return np.linalg.svd(q, compute_uv=False)[-1]
-
-
 def sidelobe_db(e):
     """Peak level outside a 15-degree exclusion zone around the true source, in dB."""
-    d = directions(AZ, EL)
-    d0 = directions([SRC_AZ], [SRC_EL])[0]
-    ang = np.degrees(np.arccos(np.clip(d @ d0, -1, 1))).reshape(e.shape)
+    d0 = unit_vectors(SRC_AZ, SRC_EL)
+    ang = np.degrees(np.arccos(np.clip(directions() @ d0, -1, 1))).reshape(GRID_SHAPE).T
     far = e[ang > 15.0]
     return 10 * np.log10(far.max())
 
@@ -218,12 +181,6 @@ def plot_for_slides(out):
     Site 1 is the training calibration. The new site is that same map after the
     microphones were moved, not a chart of how far each one shifted.
     """
-    sys_path = str(REPO)
-    if sys_path not in sys.path:
-        sys.path.insert(0, sys_path)
-    from src.config import MIC_SUBSETS, SESSION_DIRS, load_align
-    from src.geometry import mic_positions
-
     site1 = mic_positions(load_align(SESSION_DIRS[1]))   # Mar 18 flight 1, training
     site2 = mic_positions(load_align(SESSION_DIRS[3]))   # Oct 11, the other site
     dev = [list(range(6 * k, 6 * k + 6)) for k in range(4)]
@@ -277,12 +234,13 @@ def plot_for_slides(out):
 
 
 if __name__ == "__main__":
-    import sys
-    if "--slides" in sys.argv:
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("--slides", action="store_true",
+                   help="draw figures/array_tested.png instead of the geometry study")
+    if p.parse_args().slides:
         plot_for_slides(REPO / "figures/array_tested.png")
         raise SystemExit(0)
-    cfg = json.load(open(SESSION))["mic_array"]
-    pos = mic_positions(cfg)
+    pos = mic_positions(load_align(SESSION))
     print(f"session: {SESSION.relative_to(REPO)}")
     print(f"source for beam patterns: azimuth {SRC_AZ} deg, elevation {SRC_EL} deg, "
           f"band {BAND[0]:.0f}-{BAND[-1]:.0f} Hz\n")

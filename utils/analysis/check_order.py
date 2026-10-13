@@ -10,17 +10,18 @@ using one set of trained weights:
     reverse  time flipped                    ->  order removed, smoothness kept
 
 Pass requires history to matter: K=5 must beat K=1, and freezing must give the gain back.
-Order sensitivity is measured and reported, not required — notes section 13 predicts
-persistence dominates beyond ~70 m, where the true peak moves under one grid cell per stack,
+Order sensitivity is measured and reported, not required: persistence is expected to dominate
+beyond ~70 m, where the true peak moves under one grid cell per stack,
 and persistence is order-invariant by construction. Near-field rows are where order should show.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import run_dir                                  # noqa: E402
+from src.config import run_dir, run_id                          # noqa: E402
 
 KEY = "hit_10deg"
 NEAR = 60.0            # metres; the range below which a stack spans more than one grid cell
@@ -79,8 +80,9 @@ def main(k1_run: str, k5_run: str) -> int:
     print("\nGATE PASS" if mechanism else "\nGATE FAIL")
     if not mechanism:
         print("  Freezing the stack to the current frame costs nothing, so the model never "
-              "looks back and there is no temporal mechanism to measure. Climb the "
-              "escalation ladder in notes section 13 before running the grid.")
+              "looks back and there is no temporal mechanism to measure. Before running "
+              "the grid, give the first block an explicit temporal input: frame-difference "
+              "channels, then a causal Conv3D, then a ConvGRU.")
     else:
         print(f"  The stack uses the past: freezing it costs {freeze_loss:.1f} pp, so the "
               "grid is measuring something real.")
@@ -100,7 +102,8 @@ def main(k1_run: str, k5_run: str) -> int:
 
 
 if __name__ == "__main__":
-    a = sys.argv[1:]
-    k1 = a[0] if a else "device3_K1_w32_b16_wce_s0"
-    k5 = a[1] if len(a) > 1 else "device3_K5_w32_b16_wce_s0"
-    raise SystemExit(main(k1, k5))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("k1", nargs="?", default=run_id("device3", 1))
+    p.add_argument("k5", nargs="?", default=run_id("device3", 5))
+    a = p.parse_args()
+    raise SystemExit(main(a.k1, a.k5))

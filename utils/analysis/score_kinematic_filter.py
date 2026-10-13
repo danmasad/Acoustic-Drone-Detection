@@ -1,21 +1,14 @@
 """The kinematic filter, and the two readings of angular error that must not be mixed.
 
-A decoded direction can jump by tens of degrees between frames. A DJI Air 3 in sport mode
-cannot: 21 m/s is 2.1 m in the 0.1 s between frames, which at range r is an angle of
-degrees(2.1 / r), plus one 4° cell because the decoder sits on the grid. The filter keeps a
-stored direction and takes a new one at once when it lies inside that cap. A jump outside the
-cap is taken only when the last half-second of raw directions all agree with that candidate;
-otherwise the stored direction is kept. It runs after the mask, on directions already saved
-in results/preds/. Nothing here trains, and the cap was not tuned on these flights.
+The filter keeps a stored direction and takes a new decode at once when it lies within a
+fixed 10° of the stored one. A larger jump is taken only when the last five raw directions
+all agree with it. The cap is the same angle at every range; GPS range is never an input to
+the decision, only to the scoring afterwards. Runs on dumps in results/preds/; nothing trains.
 
-Two summaries of the same angle, and they do not convert into each other:
-
-- **External** is the paper's metric. Mean angular error, their bins 0-50 / 50-100 /
-  100-200 m. Their delay-and-sum bars are every frame; their U-Net bars are the frames whose
-  last three directions already agree within 10°. Only this block may be set beside Fig. 5.
-- **Internal** is ours, and it is stricter. Every drone frame, not the stable subset. The
-  share whose error is at most 10°, in 30 m bins, and the sideways miss range * sin(error),
-  because 10° at 100 m is a 17 m disk. Variant against variant uses this block.
+Two summaries, and they do not convert into each other. **External** is the paper's: mean
+angular error in their 0-50 / 50-100 / 100-200 m bins, U-Net rows on stable frames only.
+**Internal** is ours: every drone frame, share inside 10° in 30 m bins, and the sideways
+miss range * sin(error).
 
     .venv/bin/python utils/analysis/score_kinematic_filter.py
     .venv/bin/python utils/analysis/score_kinematic_filter.py --split test_1
@@ -28,24 +21,23 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import AZ, EL, pred_file                             # noqa: E402
-from src.geometry import angular_distance                           # noqa: E402
+from src.config import AZ, EL, pred_file, run_id                     # noqa: E402
+from src.geometry import angular_distance, to_angles, unit_vectors  # noqa: E402
 from utils.analysis.check_vs_paper import PAPER, PAPER_BINS, binned_mean, stability_flags  # noqa: E402
 
-# DJI Air 3, sport mode, 21 m/s times the 0.1 s frame. Plus one cell of the 4° grid.
-STEP_M = 2.1
-CELL_DEG = 4.0
+# One sky-angle cap at every range. Five frames is the half-second a jump must hold.
+CAP_DEG = 10.0
 K_AGREE = 5
 
 OUR_BINS = ((0.0, 30.0), (30.0, 60.0), (60.0, 90.0), (90.0, 120.0), (120.0, 180.0))
 HIT_DEG = 10.0
 SD_SHOW = 1.5
 
-# test_2 only. Rounded 3-seed mean of the overall share inside 10°, raw then filtered,
-# and the delay-and-sum paper-bin means. These are the published cuts, not a fit.
+# test_2 only. Rounded 3-seed mean of the overall share inside 10°, raw then filtered with
+# the fixed 10° cap, and the delay-and-sum paper-bin means. A regression pin, not a fit.
 GATE_HIT = {
-    "all24_K1_wce": (70, 76),
-    "device3_K1_wce": (69, 75),
+    "all24_K1_wce": (70, 75),
+    "device3_K1_wce": (69, 73),
     "device3_K9_wce": (73, 73),
 }
 GATE_DAS = (40, 72, 31)
@@ -56,50 +48,43 @@ VARIANTS = [
     ("Delay-and-sum, 24 mics", "baseline", "all24", "baseline_all24"),
     ("Delay-and-sum, device 3", "baseline", "device3", ""),
     ("Delay-and-sum, searched 6", "baseline", "best6", ""),
-    ("24 mics, K=1", "seeds", "all24_K1_w32_b16_wce_s{s}", "all24_K1_wce"),
-    ("24 mics, K=5", "seeds", "all24_K5_w32_b16_wce_s{s}", ""),
-    ("24 mics, K=1, Tversky", "seeds", "all24_K1_w32_b16_tversky_s{s}", ""),
-    ("24 mics, K=1, disc resampled", "seeds", "all24_K1_w32_b16_wce_polar_s{s}", ""),
-    ("24 mics, K=1, disc native", "seeds", "all24_K1_w32_b16_wce_polarn_s{s}", ""),
-    ("24 mics, K=1, native disc + Tversky", "seeds", "all24_K1_w32_b16_tversky_polarn_s{s}", ""),
-    ("Device 3, K=1", "seeds", "device3_K1_w32_b16_wce_s{s}", "device3_K1_wce"),
-    ("Device 3, K=5", "seeds", "device3_K5_w32_b16_wce_s{s}", ""),
-    ("Device 3, K=9", "seeds", "device3_K9_w32_b16_wce_s{s}", "device3_K9_wce"),
-    ("Device 3, K=9, disc native", "seeds", "device3_K9_w32_b16_wce_polarn_s{s}", ""),
-    ("Searched 6, K=1", "seeds", "best6_K1_w32_b16_wce_s{s}", ""),
-    ("Searched 6, K=5", "seeds", "best6_K5_w32_b16_wce_s{s}", ""),
-    ("Device 1+3, K=1", "once", "device1_3_K1_w32_b16_wce_s0", ""),
-    ("Device 1, K=1", "once", "device1_K1_w32_b16_wce_s0", ""),
-    ("Device 4, K=1", "once", "device4_K1_w32_b16_wce_s0", ""),
-    ("Symmetric 6, K=1", "once", "symmetric6_K1_w32_b16_wce_s0", ""),
-    ("Quad 4, K=1", "once", "quad4_K1_w32_b16_wce_s0", ""),
+    ("24 mics, K=1", "seeds", run_id("all24", 1, seed="{s}"), "all24_K1_wce"),
+    ("24 mics, K=5", "seeds", run_id("all24", 5, seed="{s}"), ""),
+    ("24 mics, K=1, Tversky", "seeds", run_id("all24", 1, loss="tversky", seed="{s}"), ""),
+    ("24 mics, K=1, disc resampled", "seeds", run_id("all24", 1, polar=True, seed="{s}"), ""),
+    ("24 mics, K=1, disc native", "seeds",
+     run_id("all24", 1, polar=True, disc="native", seed="{s}"), ""),
+    ("24 mics, K=1, native disc + Tversky", "seeds",
+     run_id("all24", 1, loss="tversky", polar=True, disc="native", seed="{s}"), ""),
+    ("Device 3, K=1", "seeds", run_id("device3", 1, seed="{s}"), "device3_K1_wce"),
+    ("Device 3, K=5", "seeds", run_id("device3", 5, seed="{s}"), ""),
+    ("Device 3, K=9", "seeds", run_id("device3", 9, seed="{s}"), "device3_K9_wce"),
+    ("Device 3, K=9, disc native", "seeds",
+     run_id("device3", 9, polar=True, disc="native", seed="{s}"), ""),
+    ("Searched 6, K=1", "seeds", run_id("best6", 1, seed="{s}"), ""),
+    ("Searched 6, K=5", "seeds", run_id("best6", 5, seed="{s}"), ""),
+    ("Device 1+3, K=1", "once", run_id("device1_3", 1), ""),
+    ("Device 1, K=1", "once", run_id("device1", 1), ""),
+    ("Device 4, K=1", "once", run_id("device4", 1), ""),
+    ("Symmetric 6, K=1", "once", run_id("symmetric6", 1), ""),
+    ("Quad 4, K=1", "once", run_id("quad4", 1), ""),
 ]
 
 NAME_W = 40
 
 
-def _unit(az: np.ndarray, el: np.ndarray) -> np.ndarray:
-    a = np.radians(az)
-    e = np.radians(el)
-    return np.stack((np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)), axis=1)
+def apply_filter(az: np.ndarray, el: np.ndarray):
+    """One segment. The stored direction starts at frame 0 and resets with the caller.
 
-
-def _angles(vec: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    az = np.degrees(np.arctan2(vec[:, 1], vec[:, 0]))
-    el = np.degrees(np.arcsin(np.clip(vec[:, 2], -1.0, 1.0)))
-    return az, el
-
-
-def apply_filter(az: np.ndarray, el: np.ndarray, range_m: np.ndarray):
-    """One segment. The stored direction starts at frame 0 and resets with the caller."""
-    vec = _unit(az, el)
+    The cap is a fixed sky angle. Range is not read here.
+    """
+    vec = unit_vectors(az, el)
     out = np.empty_like(vec)
     stored = vec[0].copy()
     out[0] = stored
+    limit = float(np.cos(np.radians(CAP_DEG)))
     for t in range(1, len(vec)):
         new = vec[t]
-        allow = np.degrees(STEP_M / max(float(range_m[t]), 1.0)) + CELL_DEG
-        limit = float(np.cos(np.radians(allow)))
         if float(np.dot(stored, new)) >= limit:
             stored = new.copy()
         else:
@@ -107,7 +92,7 @@ def apply_filter(az: np.ndarray, el: np.ndarray, range_m: np.ndarray):
             if start >= 0 and bool(np.all(vec[start:t + 1] @ new >= limit)):
                 stored = new.copy()
         out[t] = stored
-    return _angles(out)
+    return to_angles(out)
 
 
 def decoded_directions(dump: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -137,7 +122,7 @@ def drone_frames(dump: dict) -> dict:
         paz = np.asarray(pred_az[idx], float)
         pel = np.asarray(pred_el[idx], float)
         rng = np.asarray(dump["range_m"][idx], float)
-        faz, fel = apply_filter(paz, pel, rng)
+        faz, fel = apply_filter(paz, pel)
         pieces.append({
             "az": np.asarray(dump["az"][idx], float),
             "el": np.asarray(dump["el"][idx], float),

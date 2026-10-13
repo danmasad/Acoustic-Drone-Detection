@@ -1,6 +1,6 @@
 """Where the direction errors are, and what shape they have: range, elevation, and sign.
 
-The notes report direction error as a mean or median per range bin. Two questions those numbers
+The headline tables report direction error as a mean or median per range bin. Two questions those numbers
 cannot answer, and both change what should be fixed:
 
 1. **Is the far-field error random or systematic?** A model that is lost scatters its answers
@@ -31,8 +31,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import FIGURES, pred_file, table_file        # noqa: E402
-from src.geometry import angular_distance                    # noqa: E402
+from src.config import FIGURES, pred_file, run_id, table_file  # noqa: E402
+from src.geometry import angular_distance, wrap180           # noqa: E402
 
 SPLIT = "test_2"
 SEEDS = (0, 1, 2)
@@ -41,17 +41,15 @@ RANGE_BINS = ((0, 50), (50, 100), (100, 200))
 ELEVATION_BINS = ((0, 15), (15, 30), (30, 45), (45, 60), (60, 90))
 FLIP_TOLERANCE = 30.0
 
-PAIRS = {
-    "all24 K=1": ("all24_K1_w32_b16_wce", "all24_K1_w32_b16_wce_polarn",
+PAIRS = {   # seedless run prefixes; the seed is appended per dump
+    "all24 K=1": (run_id("all24", 1, seed=None),
+                  run_id("all24", 1, polar=True, disc="native", seed=None),
                   "polar_vs_rect.json", "rect + wce", "disc native + wce"),
-    "device3 K=9": ("device3_K9_w32_b16_wce", "device3_K9_w32_b16_wce_polarn",
+    "device3 K=9": (run_id("device3", 9, seed=None),
+                    run_id("device3", 9, polar=True, disc="native", seed=None),
                     "polar_k9.json", "device3 K=9 rect", "device3 K=9 disc"),
 }
 BASELINES = {"all24 K=1": "baseline_all24", "device3 K=9": "baseline_device3"}
-
-
-def wrap180(d: np.ndarray) -> np.ndarray:
-    return (d + 180.0) % 360.0 - 180.0
 
 
 def frames(path: Path) -> dict:

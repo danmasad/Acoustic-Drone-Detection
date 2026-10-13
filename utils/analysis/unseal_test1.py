@@ -17,6 +17,7 @@ The discipline only means something if it is visible, so:
   about 16 frames. Differences that would be meaningful on test 2 are noise here, and the script
   prints the frame counts next to every rate to make that unavoidable.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import detector, predict                                 # noqa: E402
 from src.config import FRAME_SECONDS, run_dir, segments, table_file  # noqa: E402
+from src.config import run_id as config_run_id                    # noqa: E402
 from src.metrics import format_summary, summarize                  # noqa: E402
 
 SPLIT = "test_1"
@@ -55,7 +57,7 @@ def k9_won() -> bool:
     hits: dict[int, list[float]] = {}
     for K in (5, 9):
         for seed in SEEDS:
-            path = run_dir(f"device3_K{K}_w32_b16_wce_s{seed}") / "metrics.json"
+            path = run_dir(config_run_id("device3", K, seed=seed)) / "metrics.json"
             if path.exists():
                 hits.setdefault(K, []).append(
                     json.loads(path.read_text())["test_2"]["hit_10deg"])
@@ -73,7 +75,7 @@ def cnn_rows() -> list[dict]:
         print("  K=9 beat K=5 on test 2, so it is scored here too")
     for subset, K in cells:
         for seed in SEEDS:
-            run_id = f"{subset}_K{K}_w32_b16_wce_s{seed}"
+            run_id = config_run_id(subset, K, seed=seed)
             if not (run_dir(run_id) / "best.pt").exists():
                 continue
             pred = predict.cnn_predictions(run_id, SPLIT, verbose=False)
@@ -85,7 +87,7 @@ def cnn_rows() -> list[dict]:
         print("  polar did not beat rectangular on test 2, so it is not scored on test 1")
         return rows
     for seed in SEEDS:
-        run_id = f"all24_K1_w32_b16_wce_polar_s{seed}"
+        run_id = config_run_id("all24", 1, polar=True, seed=seed)
         if not (run_dir(run_id) / "best.pt").exists():
             continue
         pred = predict.cnn_predictions(run_id, SPLIT, verbose=False)
@@ -170,7 +172,8 @@ def main(force: bool = False, detector_run: str = "detector_K1_w32_s0_full") -> 
 
 
 if __name__ == "__main__":
-    a = sys.argv[1:]
-    raise SystemExit(main(force="--force" in a,
-                          detector_run=next((x for x in a if not x.startswith("--")),
-                                            "detector_K1_w32_s0_full")))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("detector_run", nargs="?", default="detector_K1_w32_s0_full")
+    p.add_argument("--force", action="store_true", help="score again although test 1 is sealed")
+    a = p.parse_args()
+    raise SystemExit(main(force=a.force, detector_run=a.detector_run))

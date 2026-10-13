@@ -14,7 +14,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import run_dir                                  # noqa: E402
+from src.config import run_dir, run_id                          # noqa: E402
+
 SUBSETS = ("all24", "device3", "best6")
 KS = (1, 5, 9)          # K=9 exists on device3 only; empty cells print as a dash
 EXPECTED = (1, 5)       # ...so completeness is only checked over the full grid
@@ -25,12 +26,8 @@ METRICS = {"hit_10deg": ("within 10 deg", 100.0, "%", 1),
            "specificity_at_95_recall": ("reject @95% recall", 100.0, "%", 1)}
 
 
-def run_id(subset: str, K: int, seed: int, width: int = 32) -> str:
-    return f"{subset}_K{K}_w{width}_b16_wce_s{seed}"
-
-
 def load(subset: str, K: int, seed: int) -> dict | None:
-    p = run_dir(run_id(subset, K, seed)) / "metrics.json"
+    p = run_dir(run_id(subset, K, seed=seed)) / "metrics.json"
     return json.loads(p.read_text()) if p.exists() else None
 
 
@@ -102,7 +99,7 @@ def coherence_table() -> None:
 
 
 def main() -> int:
-    missing = [run_id(s, k, d) for s, k, d in product(SUBSETS, EXPECTED, SEEDS)
+    missing = [run_id(s, k, seed=d) for s, k, d in product(SUBSETS, EXPECTED, SEEDS)
                if load(s, k, d) is None]
     if missing:
         print(f"missing {len(missing)} runs: {missing}\n")

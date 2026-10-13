@@ -6,18 +6,19 @@ step, which is why the cache stores spectra and the maps are never written to di
 microphone subset, the band, the number of sub-bands and the direction grid are therefore
 runtime flags.
 """
+import hashlib
+
 import numpy as np
 import torch
 
 from .config import GRID_SHAPE, MODEL_BAND, N_SUBBANDS
-from .geometry import directions, mic_positions
+from .geometry import mic_positions, steering
 
 _CACHE: dict = {}
 
 
 def pick_device(prefer: str = "auto") -> torch.device:
-    """MPS when it is really available. Note it is *not* available inside a sandboxed
-    shell, where torch reports a misleading 'macOS 14.0+' error."""
+    """The Apple GPU (MPS) when available, otherwise the CPU. `prefer` forces a device."""
     if prefer != "auto":
         return torch.device(prefer)
     if torch.backends.mps.is_available():
@@ -48,8 +49,8 @@ def subband_matrix(freqs: np.ndarray, n_subbands: int = N_SUBBANDS,
 class Beamformer:
     """Steering for one (session geometry, microphone subset, band, sub-band count).
 
-    Tensors are built once and memoized, because the grid steering tensor is ~40 MB and
-    rebuilding it per batch would cost more than the beamforming itself.
+    Tensors are built once and memoized, because the grid steering tensor is up to ~80 MB
+    (all 24 microphones) and rebuilding it per batch would cost more than the beamforming.
     """
 
     def __init__(self, align: dict, channels, freqs: np.ndarray,
@@ -64,18 +65,12 @@ class Beamformer:
         sel, sub = subband_matrix(freqs, n_subbands, band)
         self.sel = sel
         pos = mic_positions(align)[self.channels]
-        dirs = directions() if dirs is None else dirs
-        tau = dirs @ pos.T / 343.0                                   # (D, M)
-        W = np.exp(-2j * np.pi * freqs[sel][:, None, None] * tau[None])
+        W = steering(pos, freqs[sel], dirs)                          # (F, D, M)
 
         # (F, M, D) so steering is a batched matmul over the frequency axis.
-        self.W = torch.from_numpy(W.transpose(0, 2, 1).astype(np.complex64)).to(self.device)
+        self.W = torch.from_numpy(np.ascontiguousarray(W.transpose(0, 2, 1))).to(self.device)
         self.sub = torch.from_numpy(sub).to(self.device)
         self.norm = 1.0 / len(self.channels)                         # keep scale comparable
-
-    @property
-    def n_freqs(self) -> int:
-        return int(self.sel.sum())
 
     def maps(self, X: torch.Tensor, log: bool = True, eps: float = 1e-12) -> torch.Tensor:
         """(B, n_subbands) + grid_shape from (B, M, F) complex spectra already on device.
@@ -92,17 +87,11 @@ class Beamformer:
 
 
 def _dirs_key(dirs: np.ndarray | None, grid_shape) -> tuple:
-    """Identity of a direction set, for the memo key.
-
-    Without this the cache was keyed on session, channels, sub-bands, band and device only, so a
-    run steering at the polar disc's own cells would be handed back the rectangular steering
-    tensor built earlier for the same session — same shape family, silently wrong directions.
-    The hash costs microseconds on a 50 KB array and is computed once per Beamformer.
-    """
+    """Identity of a direction set, for the memo key: the rectangular grid by its shape, any
+    other set (the polar disc's cells) by a hash of its vectors, so two direction sets on the
+    same session and microphones never share a steering tensor."""
     if dirs is None:
         return ("grid", tuple(grid_shape))
-    import hashlib
-
     digest = hashlib.sha1(np.ascontiguousarray(dirs, dtype=np.float64)).hexdigest()[:16]
     return (digest, dirs.shape, tuple(grid_shape))
 
@@ -115,10 +104,3 @@ def get(align: dict, channels, freqs: np.ndarray, key: str = "", **kw) -> Beamfo
     if ck not in _CACHE:
         _CACHE[ck] = Beamformer(align, channels, freqs, **kw)
     return _CACHE[ck]
-
-
-def peak_direction(maps: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Brightest pixel of each map, summed over sub-bands. Returns (el index, az index)."""
-    flat = maps.sum(1).flatten(1)
-    k = flat.argmax(1)
-    return k // maps.shape[-1], k % maps.shape[-1]

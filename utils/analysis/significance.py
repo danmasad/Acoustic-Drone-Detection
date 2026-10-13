@@ -50,7 +50,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import metrics, predict                                   # noqa: E402
-from src.config import ANGULAR_THRESHOLD, pred_file, run_dir, table_file  # noqa: E402
+from src.config import ANGULAR_THRESHOLD, pred_file, run_dir, run_id, table_file  # noqa: E402
 from src.geometry import angular_distance                          # noqa: E402
 
 SEEDS = (0, 1, 2)
@@ -331,7 +331,7 @@ def cell_ci(subset: str, K: int, split: str = "test_2", tag: str = "wce") -> dic
     standard error enters the combined interval as seed_sd / sqrt(n_seeds). The combined
     half-width adds the two in quadrature at MAIN_BLOCK, which treats them as independent.
     """
-    runs = [f"{subset}_K{K}_w32_b16_{tag}_s{s}" for s in SEEDS]
+    runs = [run_id(subset, K, loss=tag, seed=s) for s in SEEDS]
     runs = [r for r in runs if pred_file(f"{r}_{split}_causal").exists()]
     if not runs:
         return None
@@ -357,7 +357,7 @@ def cell_ci(subset: str, K: int, split: str = "test_2", tag: str = "wce") -> dic
 def hits_from_metrics(subset: str, K: int, tag: str = "wce") -> list[float]:
     out = []
     for s in SEEDS:
-        p = run_dir(f"{subset}_K{K}_w32_b16_{tag}_s{s}") / "metrics.json"
+        p = run_dir(run_id(subset, K, loss=tag, seed=s)) / "metrics.json"
         if p.exists():
             out.append(100 * json.loads(p.read_text())["test_2"]["hit_10deg"])
     return out
@@ -375,8 +375,8 @@ def main() -> int:
     print("One set of weights, the same frames scored twice. Nine frames of real history against")
     print("the current frame repeated nine times. Units are percentage points of hit rate.\n")
 
-    d9 = seed_mean_frames("device3_K9_w32_b16_wce_s{s}", "causal")
-    d1 = seed_mean_frames("device3_K9_w32_b16_wce_s{s}", "freeze1")
+    d9 = seed_mean_frames(run_id("device3", 9, seed="{s}"), "causal")
+    d1 = seed_mean_frames(run_id("device3", 9, seed="{s}"), "freeze1")
     if d9 and d1:
         n = min(len(d9[0]), len(d1[0]))
         diff, rng, seg = d9[0][:n] - d1[0][:n], d9[2][:n], d9[3][:n]
@@ -411,8 +411,8 @@ def main() -> int:
     print("\n" + "=" * 92)
     print("2. The same intervention on all 24 microphones, as a control")
     print("=" * 92)
-    a9 = seed_mean_frames("all24_K5_w32_b16_wce_s{s}", "causal")
-    a1 = seed_mean_frames("all24_K5_w32_b16_wce_s{s}", "freeze1")
+    a9 = seed_mean_frames(run_id("all24", 5, seed="{s}"), "causal")
+    a1 = seed_mean_frames(run_id("all24", 5, seed="{s}"), "freeze1")
     if a9 and a1:
         n = min(len(a9[0]), len(a1[0]))
         diff, seg = a9[0][:n] - a1[0][:n], a9[3][:n]
@@ -441,9 +441,12 @@ def main() -> int:
     print("4. The native polar disc in the far bin, both ways")
     print("=" * 92)
     print("Mean azimuth error in degrees beyond 100 m, so negative is better.")
-    rect = seed_mean_frames("all24_K1_w32_b16_wce_s{s}", "causal")
-    for label, tpl in (("native disc + wce", "all24_K1_w32_b16_wce_polarn_s{s}"),
-                       ("native disc + tversky", "all24_K1_w32_b16_tversky_polarn_s{s}")):
+    rect = seed_mean_frames(run_id("all24", 1, seed="{s}"), "causal")
+    for label, tpl in (("native disc + wce",
+                        run_id("all24", 1, polar=True, disc="native", seed="{s}")),
+                       ("native disc + tversky",
+                        run_id("all24", 1, loss="tversky", polar=True, disc="native",
+                               seed="{s}"))):
         cell = seed_mean_frames(tpl, "causal")
         if not (rect and cell):
             continue

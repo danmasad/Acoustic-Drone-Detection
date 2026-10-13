@@ -1,14 +1,17 @@
 """The only module that opens a WAV.
 
-One pass over the 24 GB of audio produces, per segment, the per-microphone short-time
-spectra of every 100 ms frame plus the aligned labels. Everything downstream (microphone
-subsets, direction grids, sub-band counts, frame stacking) is then a re-steer over this
-cache rather than another read of the audio.
+For every 100 ms frame of every segment, this keeps the spectrum of each microphone:
+the 4,800 samples are band-passed, FFT'd into 10 Hz bins, and only the 381 bins in
+200-4000 Hz are stored, as complex numbers so the phase between microphones survives.
+The result, cache/<segment>/stft.npy of shape (frames, 24, 381), is about 6x smaller
+than the WAVs and holds the in-band audio exactly. The frame labels are saved beside it.
 
-Why spectra and not finished energy maps: a map cache costs ~3.4 GB per microphone subset
-and freezes the subset, the grid and the bin count into storage, while steering a batch
-costs about 2% of a training step. See design_notes section 10.
+Everything downstream (microphone subsets, direction grids, sub-band counts, frame
+stacking) is a re-steer over this cache rather than another read of the audio. Maps are
+not cached because that would fix the subset, grid and bin count at about 3.4 GB per
+subset, while steering a batch costs about 2% of a training step.
 """
+import argparse
 import struct
 import time
 from pathlib import Path
@@ -25,6 +28,17 @@ from .labels import frame_labels
 # first so it cannot leak up through the sidelobes of a rectangular analysis window.
 FILTER_BAND = (200.0, 8000.0)
 FILTER_ORDER = 5
+
+
+def bandpass_coeffs(band=FILTER_BAND, order=FILTER_ORDER, sr=SR):
+    """Butterworth (b, a) for the band-pass applied before every STFT in this repo."""
+    return butter(order, [band[0] / (sr / 2), band[1] / (sr / 2)], btype="band")
+
+
+def bandpass(x: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Zero-phase band-pass of `x` along `axis`, identical to the one `build_cache` applies."""
+    b, a = bandpass_coeffs()
+    return filtfilt(b, a, x, axis=axis)
 
 
 def wav_info(path: Path) -> tuple[int, int, int, int]:
@@ -56,8 +70,13 @@ def wav_info(path: Path) -> tuple[int, int, int, int]:
 class SegmentAudio:
     """Memory-mapped 24-channel view of one segment, with per-recorder offsets applied.
 
-    The four recorders were started by hand seconds apart, so each has its own sample
-    correction. Sample 0 here is the first sample of the segment on every channel.
+    Each recorder writes its own file and was started by hand, so the same instant sits at
+    a different sample in each (2-54 ms apart in this dataset). corrections_samples shifts
+    every file so sample 0 is the same instant on all 24 channels. This removes only the
+    recording offset; the physical arrival-time differences between microphones (at most
+    about 4 ms across the array) are left intact, since they are what the beamformer reads.
+    The correction is whole samples, once per session, so sub-sample error and clock drift
+    between recorders remain.
     """
 
     def __init__(self, seg: Segment):
@@ -91,7 +110,10 @@ class SegmentAudio:
 
 def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
                 overwrite: bool = False, verbose: bool = True) -> Path:
-    """Write cache/<segment id>/{stft.npy, meta.npz}. Returns the segment's cache dir."""
+    """Write cache/<segment id>/{stft.npy, meta.npz}. Returns the segment's cache dir.
+
+    Labels and audio are cut to the shorter of the two.
+    """
     out_dir = seg.cache_dir
     stft_path, meta_path = out_dir / "stft.npy", out_dir / "meta.npz"
     if stft_path.exists() and meta_path.exists() and not overwrite:
@@ -109,8 +131,7 @@ def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
 
     freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
     sel = (freqs >= band[0]) & (freqs <= band[1])
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
+    b, a = bandpass_coeffs()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     stft = np.lib.format.open_memmap(stft_path, mode="w+", dtype=np.complex64,
@@ -142,9 +163,9 @@ def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
     return out_dir
 
 
-def load_cache(seg: Segment, mmap: bool = True) -> tuple[np.ndarray, dict]:
+def load_cache(seg: Segment) -> tuple[np.ndarray, dict]:
     """(n, 24, F) complex64 spectra and the meta dict, index-aligned by construction."""
-    stft = np.load(seg.cache_dir / "stft.npy", mmap_mode="r" if mmap else None)
+    stft = np.load(seg.cache_dir / "stft.npy", mmap_mode="r")
     meta = dict(np.load(seg.cache_dir / "meta.npz", allow_pickle=False))
     if len(stft) != int(meta["n_frames"]):
         raise ValueError(f"{seg.id}: {len(stft)} frames cached, meta says {meta['n_frames']}")
@@ -152,8 +173,6 @@ def load_cache(seg: Segment, mmap: bool = True) -> tuple[np.ndarray, dict]:
 
 
 if __name__ == "__main__":
-    import argparse
-
     p = argparse.ArgumentParser(description="Build the STFT cache for every segment.")
     p.add_argument("--only", help="substring filter on segment id")
     p.add_argument("--overwrite", action="store_true")

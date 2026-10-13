@@ -30,16 +30,16 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import FIGURES, FRAME_SECONDS, table_file       # noqa: E402
-from src.metrics import auroc, specificity_at_recall            # noqa: E402
+from src.config import FIGURES, FRAME_SECONDS, run_id, table_file  # noqa: E402
+from src.metrics import auroc, specificity_at_recall, threshold_for_count  # noqa: E402
 from src.predict import load                                    # noqa: E402
 
 WINDOWS = (1, 2, 3, 5, 10, 20, 30)
 SEEDS = (0, 1, 2)
-MODELS = {"all24 K=1": "all24_K1_w32_b16_wce_s{s}",
-          "device3 K=1": "device3_K1_w32_b16_wce_s{s}",
-          "device3 K=5": "device3_K5_w32_b16_wce_s{s}",
-          "best6 K=1": "best6_K1_w32_b16_wce_s{s}"}
+MODELS = {"all24 K=1": run_id("all24", 1, seed="{s}"),
+          "device3 K=1": run_id("device3", 1, seed="{s}"),
+          "device3 K=5": run_id("device3", 5, seed="{s}"),
+          "best6 K=1": run_id("best6", 1, seed="{s}")}
 
 
 def smooth_causal(score: np.ndarray, seg: np.ndarray, frame: np.ndarray,
@@ -65,11 +65,6 @@ def n_of_m(score: np.ndarray, seg: np.ndarray, frame: np.ndarray, thr: float,
            window: int) -> np.ndarray:
     """Fraction of the last `window` frames above `thr`, within each segment."""
     return smooth_causal((np.asarray(score, float) >= thr).astype(float), seg, frame, window)
-
-
-def threshold_for_count(score: np.ndarray, negatives: np.ndarray, count: int) -> float:
-    neg = np.sort(np.asarray(score, float)[negatives])[::-1]
-    return -np.inf if count >= len(neg) else float(np.nextafter(neg[count], np.inf))
 
 
 def recall_at_count(score: np.ndarray, drone: np.ndarray, count: int) -> float:

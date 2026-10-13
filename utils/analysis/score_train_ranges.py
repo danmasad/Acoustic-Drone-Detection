@@ -14,18 +14,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import AZ, EL, pred_file, table_file  # noqa: E402
+from src.config import AZ, EL, pred_file, run_id, table_file  # noqa: E402
 from src.geometry import angular_distance       # noqa: E402
 from src.predict import baseline_predictions, cnn_predictions  # noqa: E402
 
 BINS = [(0, 30), (30, 60), (60, 90), (90, 120), (120, 180)]
 MODELS = [
     ("Delay-and-sum, 24 mics", None, ["baseline_all24"]),
-    ("U-Net, 24 mics, K = 1", [f"all24_K1_w32_b16_wce_s{s}" for s in range(3)], None),
-    ("U-Net, device 3, K = 1", [f"device3_K1_w32_b16_wce_s{s}" for s in range(3)], None),
-    ("U-Net, device 3, K = 5", [f"device3_K5_w32_b16_wce_s{s}" for s in range(3)], None),
-    ("U-Net, device 3, K = 9", [f"device3_K9_w32_b16_wce_s{s}" for s in range(3)], None),
-    ("U-Net, searched 6, K = 1", [f"best6_K1_w32_b16_wce_s{s}" for s in range(3)], None),
+    ("U-Net, 24 mics, K = 1", [run_id("all24", 1, seed=s) for s in range(3)], None),
+    ("U-Net, device 3, K = 1", [run_id("device3", 1, seed=s) for s in range(3)], None),
+    ("U-Net, device 3, K = 5", [run_id("device3", 5, seed=s) for s in range(3)], None),
+    ("U-Net, device 3, K = 9", [run_id("device3", 9, seed=s) for s in range(3)], None),
+    ("U-Net, searched 6, K = 1", [run_id("best6", 1, seed=s) for s in range(3)], None),
 ]
 OUT = table_file("train_range_hit.json")
 

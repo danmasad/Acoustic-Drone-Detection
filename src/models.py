@@ -1,8 +1,7 @@
 """The network: an encoder-decoder over the energy map, with two heads.
 
-Hyperparameters are adopted from the reference paper rather than searched (64 base
-filters, depth 3, 3x3 kernels), because that is where their compute went and re-searching
-per condition would confound the comparison we care about.
+Depth 3 and 3x3 kernels follow the reference paper. The base width is 32 against their 64:
+2.3x faster, overfits less, about 2 M parameters.
 
 Two departures, both deliberate:
 
@@ -19,6 +18,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from .config import AZ, EL
+from .geometry import directions, to_angles
 
 
 def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float = 0.5,
@@ -26,22 +26,10 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
                 valid: torch.Tensor | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Mask logits -> one direction per frame, in degrees.
 
-    `dirs` supplies one unit vector per map cell and switches the decoder to a layout other
-    than the rectangular elevation-by-azimuth grid — the polar disc of `src.polar`. Without it
-    the rectangular grid is assumed, and the azimuth axis is treated as circular. `valid` marks
-    cells that describe no direction at all, which only the disc has.
-
-    Two decoders, and the choice turns out to matter more than most architecture decisions:
-
-    - `argmax`: the brightest pixel. Simple, but quantized to the 4 degree grid and decided by
-      a single pixel, so one bright artefact anywhere in the map wins outright.
-    - `centroid`: the paper's post-processing (their section 3) — threshold the sigmoid at 0.5,
-      erode with a 3x3 kernel, fall back to the unthresholded mask if erosion empties it, then
-      take the centroid of what remains. Averaging over the activated region is robust to
-      speckle, and the answer is continuous rather than grid-quantized.
-
-    The centroid is taken over unit vectors rather than over azimuth degrees, because azimuth
-    wraps: the mean of 179 and -179 is 180, not 0.
+    `argmax` is the brightest pixel, quantized to the grid. `centroid` is the paper's rule:
+    threshold at 0.5, erode 3x3, fall back to the unthresholded mask if that empties it, then
+    average unit vectors (not azimuth degrees, which wrap). `dirs` gives one unit vector per
+    cell for a non-rectangular layout (the disc in `src.polar`); `valid` marks its dead cells.
     """
     p = torch.sigmoid(logits)
     B, n_el, n_az = p.shape
@@ -56,9 +44,7 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
         k = p.flatten(1).argmax(1)
         if wrap:
             return AZ[(k % n_az).cpu().numpy()], EL[(k // n_az).cpu().numpy()]
-        v = dirs[k].cpu().numpy()
-        return (np.degrees(np.arctan2(v[:, 1], v[:, 0])),
-                np.degrees(np.arcsin(np.clip(v[:, 2], -1.0, 1.0))))
+        return to_angles(dirs[k].cpu().numpy())
 
     binary = (p > threshold).float()
     if valid is not None:
@@ -78,20 +64,10 @@ def decode_mask(logits: torch.Tensor, mode: str = "centroid", threshold: float =
         weights = weights.clone()
         weights[empty] = F.one_hot(p.flatten(1)[empty].argmax(1), n_el * n_az).float()
 
-    if wrap:
-        az = torch.from_numpy(np.radians(AZ).astype(np.float32)).to(p.device)
-        el = torch.from_numpy(np.radians(EL).astype(np.float32)).to(p.device)
-        grid_el, grid_az = torch.meshgrid(el, az, indexing="ij")
-        v = torch.stack([torch.cos(grid_el) * torch.cos(grid_az),
-                         torch.cos(grid_el) * torch.sin(grid_az),
-                         torch.sin(grid_el)], -1).reshape(-1, 3)
-    else:
-        v = dirs
+    v = torch.from_numpy(directions().astype(np.float32)).to(p.device) if wrap else dirs
     mean = (weights @ v) / weights.sum(1, keepdim=True).clamp(min=1e-9)
     mean = mean / mean.norm(dim=1, keepdim=True).clamp(min=1e-9)
-    m = mean.cpu().numpy()
-    return (np.degrees(np.arctan2(m[:, 1], m[:, 0])),
-            np.degrees(np.arcsin(np.clip(m[:, 2], -1.0, 1.0))))
+    return to_angles(mean.cpu().numpy())
 
 
 class Conv(nn.Module):
@@ -125,9 +101,12 @@ class Block(nn.Module):
 
 
 class UNet(nn.Module):
-    """(B, C, 23, 91) maps -> per-pixel logits of the same size, plus one presence logit."""
+    """(B, C, H, W) maps -> (B, H, W) per-pixel logits, plus one presence logit per map.
 
-    def __init__(self, in_channels: int, base: int = 64, depth: int = 3,
+    H x W is the 23 x 91 rectangle, or the 46 x 46 disc with `wrap=False`.
+    """
+
+    def __init__(self, in_channels: int, base: int = 32, depth: int = 3,
                  dropout: float = 0.1, wrap: bool = True):
         super().__init__()
         chans = [base * 2 ** i for i in range(depth)]
@@ -144,15 +123,9 @@ class UNet(nn.Module):
             c = ch
         self.drop = nn.Dropout2d(dropout)
         self.mask_head = nn.Conv2d(c, 1, 1)
-        # Mean *and* max pooling: a drone is a focused peak, and averaging alone throws away
-        # exactly the peakiness that distinguishes it from diffuse wind noise.
-        #
-        # LeakyReLU, not ReLU. At lr 5e-3 the plain-ReLU version of this head died outright in
-        # the all24 seed-0 run: every one of the 128 units sat at a negative pre-activation for
-        # every input (mean -7.6, max -0.50), so the logit was frozen at the output bias and
-        # AUROC read exactly 0.500 from epoch 0. A dead ReLU layer passes zero gradient and can
-        # never recover, and a single hidden layer gives it no second path. A small negative
-        # slope keeps gradient alive at no cost to the mask branch.
+        # Mean and max pooling: the max keeps the single sharp peak that separates a drone from
+        # diffuse wind. LeakyReLU keeps a gradient for negative inputs, so the head cannot die
+        # into a constant output.
         self.presence_head = nn.Sequential(nn.Flatten(), nn.Linear(chans[-1] * 4, 128),
                                            nn.LeakyReLU(0.01, inplace=True),
                                            nn.Dropout(dropout), nn.Linear(128, 1))
@@ -177,8 +150,8 @@ class UNet(nn.Module):
 
 
 def tversky_loss(logits, target, alpha: float = 0.3, beta: float = 0.7, eps: float = 1.0):
-    """Their loss. Beta > alpha punishes misses harder than false positives, which is what
-    a sparse target needs; it is the smooth generalization of the Dice coefficient."""
+    """The paper's loss. Beta > alpha makes a missed drone cell cost more than a false one;
+    alpha = beta = 0.5 is the Dice loss."""
     p = torch.sigmoid(logits)
     tp = (p * target).sum((-2, -1))
     fp = (p * (1 - target)).sum((-2, -1))
@@ -187,12 +160,11 @@ def tversky_loss(logits, target, alpha: float = 0.3, beta: float = 0.7, eps: flo
 
 
 class Loss(nn.Module):
-    """Per-pixel localization loss plus presence classification.
+    """Per-pixel localization loss plus presence classification, weighted equally.
 
-    `kind='wce'` is class-weighted cross-entropy, the default: about 2% of pixels are
-    positive, so an unweighted loss is minimized by predicting empty sky everywhere.
-    `kind='tversky'` is the paper's choice, kept as the one alternative the step 4 sanity
-    check compares.
+    `kind='wce'` (default) is class-weighted cross-entropy: about 1.4% of cells are positive,
+    so unweighted it is minimized by predicting empty sky everywhere. `kind='tversky'` is the
+    paper's loss, run as its own experiment.
     """
 
     def __init__(self, kind: str = "wce", pos_weight: float = 40.0,
@@ -200,9 +172,8 @@ class Loss(nn.Module):
         super().__init__()
         self.kind = kind
         self.register_buffer("pw", torch.tensor(float(pos_weight)))
-        # 92% of training frames contain a drone, because the dataset's only negatives are
-        # one 5-minute ambient tail. Unweighted, the presence head is minimized by always
-        # answering yes, which is what it did.
+        # Most training frames contain a drone; the only negatives are the ambient tails and the
+        # pre-takeoff windows. Unweighted, the presence head is minimized by always answering yes.
         self.register_buffer("ppw", torch.tensor(float(presence_pos_weight)))
         self.presence_weight = presence_weight
 

@@ -23,6 +23,7 @@ floor rather than an honest confidence interval.
 
 Reads `results/preds/` only, and never calls the GPU, so it is safe to run while training.
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -32,23 +33,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src import predict                                            # noqa: E402
-from src.config import ANGULAR_THRESHOLD, FIGURES, table_file      # noqa: E402
+from src.config import ANGULAR_THRESHOLD, FIGURES, run_id, table_file  # noqa: E402
 from src.geometry import angular_distance                          # noqa: E402
+from src.train import history_order as order_of                    # noqa: E402
 
 BINS = ((0, 30), (30, 60), (60, 90), (90, 120), (120, 180))
 SEEDS = (0, 1, 2)
 # device3 K=9 first: it is the only cell with the full depth range, and the only array where the
 # depth curve moves at all, so it is where a range breakdown can say anything.
-CELLS = {"device3 K=9": ("device3_K9_w32_b16_wce_s{s}", 9),
-         "device3 K=5": ("device3_K5_w32_b16_wce_s{s}", 5),
-         "best6 K=5": ("best6_K5_w32_b16_wce_s{s}", 5),
-         "all24 K=5": ("all24_K5_w32_b16_wce_s{s}", 5)}
-
-
-def order_of(j: int, K: int) -> str:
-    """`freeze{j}` keeps j frames of real history; at j == K nothing is frozen."""
-    return "causal" if j >= K else f"freeze{j}"
-
+CELLS = {"device3 K=9": (run_id("device3", 9, seed="{s}"), 9),
+         "device3 K=5": (run_id("device3", 5, seed="{s}"), 5),
+         "best6 K=5": (run_id("best6", 5, seed="{s}"), 5),
+         "all24 K=5": (run_id("all24", 5, seed="{s}"), 5)}
 
 def frame_errors(name: str):
     """(hit indicator, azimuth error, range) over drone frames, or None if not dumped."""
@@ -210,5 +206,6 @@ def plot(cells: dict, split: str) -> None:
 
 
 if __name__ == "__main__":
-    a = [x for x in sys.argv[1:] if not x.startswith("--")]
-    raise SystemExit(main(a[0] if a else "test_2"))
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("split", nargs="?", default="test_2")
+    raise SystemExit(main(p.parse_args().split))

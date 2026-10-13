@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import table_file                                # noqa: E402
+from src.config import run_id, table_file                        # noqa: E402
 from src.metrics import DISTANCE_BINS, angular_errors            # noqa: E402
 from src.predict import load                                     # noqa: E402
 
@@ -50,8 +50,8 @@ def hits(pred: dict) -> tuple[dict, np.ndarray, np.ndarray]:
 
 def paired(subset: str, seed: int, split: str, bins=None) -> dict | None:
     try:
-        k1 = load(f"{subset}_K1_w32_b16_wce_s{seed}_{split}_causal")
-        k5 = load(f"{subset}_K5_w32_b16_wce_s{seed}_{split}_causal")
+        k1 = load(f"{run_id(subset, 1, seed=seed)}_{split}_causal")
+        k5 = load(f"{run_id(subset, 5, seed=seed)}_{split}_causal")
     except FileNotFoundError:
         return None
     key1, hit1, rng1 = hits(k1)
