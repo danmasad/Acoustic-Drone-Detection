@@ -1,9 +1,9 @@
 ---
 title: "Hearing Drones in 3D: Convolutional Detection and Direction-Finding from a Reduced Microphone Array"
 author: "Shai Livshits, Dan Masad"
-date: "5 October 2026"
-geometry: margin=0.62in
-fontsize: 10pt
+date: "12 October 2026"
+geometry: margin=0.72in
+fontsize: 10.5pt
 colorlinks: true
 header-includes: |
   \usepackage{titlesec}
@@ -12,22 +12,22 @@ header-includes: |
   \usepackage{caption}
   \usepackage{etoolbox}
   \usepackage{booktabs}
-  \setlength{\droptitle}{-5em}
+  \setlength{\droptitle}{-2.2em}
   \posttitle{\par\end{center}}
-  \titlespacing*{\section}{0pt}{1.5pt}{0pt}
-  \titlespacing*{\subsection}{0pt}{1pt}{0pt}
-  \setlength{\parskip}{0.4pt}
-  \linespread{0.93}
-  \captionsetup{font=footnotesize,skip=1pt}
-  \AtBeginEnvironment{longtable}{\footnotesize\setlength{\tabcolsep}{3pt}}
-  \setlength{\LTpre}{1pt}
-  \setlength{\LTpost}{1pt}
-  \setlength{\textfloatsep}{3pt}
-  \setlength{\intextsep}{3pt}
-  \setlist[itemize]{itemsep=0pt,topsep=1pt,parsep=0pt,leftmargin=1.1em}
+  \titlespacing*{\section}{0pt}{9pt}{3pt}
+  \titlespacing*{\subsection}{0pt}{7pt}{2pt}
+  \setlength{\parskip}{3.5pt}
+  \linespread{1.02}
+  \captionsetup{font=footnotesize,skip=4pt}
+  \AtBeginEnvironment{longtable}{\small\setlength{\tabcolsep}{4pt}}
+  \setlength{\LTpre}{4pt}
+  \setlength{\LTpost}{4pt}
+  \setlength{\textfloatsep}{8pt}
+  \setlength{\intextsep}{8pt}
+  \setlist[itemize]{itemsep=2pt,topsep=3pt,parsep=0pt,leftmargin=1.2em}
 ---
 
-**Project Category:** Applied — Audio / Convolutional Networks / Defense & Security.
+**Project Category:** Applied: Audio / Convolutional Networks / Defense & Security.
 
 **Code:** [github.com/danmasad/Acoustic-Drone-Detection](https://github.com/danmasad/Acoustic-Drone-Detection)
 
@@ -53,9 +53,19 @@ The release labels about five minutes of no-drone audio. We mined pre-takeoff au
 
 One pass caches every frame's spectra (381 bins, 200–4000 Hz). Frequency-domain delay-and-sum then builds maps of 23 elevations by 91 azimuths at 4°, averaged into 16 sub-bands over 200–2200 Hz. The array is unambiguous only below 1.47 kHz, so the maps run past the alias-free band, and even all 24 microphones leave a 3.6 dB phantom beside the true peak.
 
-The model is a depth-3 U-Net with 3×3 convolutions, circular padding on azimuth, a per-pixel mask, and a pooled presence head. Temporal context is $K$ frames stacked on the channel axis, newest last, so it is causal. Hyperparameters follow the paper where we could: Adam at $5\times10^{-3}$, class-weighted cross-entropy, early stopping on the test-2 hit rate with patience 10. Two measured deviations: 32 base filters rather than 64, which was both faster and better (72% against 63% within 10°), and a leaky presence head after a plain ReLU died in one seed. The baseline is brightest-pixel delay-and-sum on the same frames. A separate 1-D CNN (86k parameters) detects from one microphone, so it can be tested on audio we did not render.
+The model is a depth-3 U-Net in PyTorch, with 3×3 convolutions, circular padding on azimuth, a per-pixel mask, and a pooled presence head. About 2.0 million parameters. Temporal context is $K$ frames stacked on the channel axis, newest last, so it is causal. Hyperparameters follow the paper where we could, and they are frozen for every cell: Adam at $5\times10^{-3}$, no schedule and no weight decay, batch 32, batch normalization, dropout 0.1, class-weighted cross-entropy. About 1.4% of pixels are the drone, so an unweighted loss is minimized by predicting empty sky. Early stopping watches the test-2 hit rate, with patience 10, at least 15 epochs and at most 60, and restores the best checkpoint rather than the last. There is no separate validation split: test 2 is both the selection set and the main reported flight. Test 1 is not read until the other choices are fixed. The baseline is brightest-pixel delay-and-sum on the same frames. A separate 1-D CNN (86k parameters) detects from one microphone, so it can be tested on audio we did not render.
 
-The kinematic filter runs after the mask, on the decoded direction. It is not an input channel and not a reason to retrain. A DJI Air 3 in sport mode is published at 21 m/s, so a frame of 0.1 s allows 2.1 m of travel. At the GPS range that is a sky-angle cap, plus one 4° cell because the decoder sits on the grid. The stored direction updates at once when the new peak lies inside the cap, and only after five consecutive frames — half a second — when it does not. A hard hold with no second chance was tried; it wrecks the score, because some large jumps are the model correcting itself. A fixed 16° cap, the same rule with no range, landed within about a point of the range-dependent cap on the same-site 24-microphone run.
+### 4.1 What we kept, and the order we decided it
+
+We started from the paper's network so that a gap would be the array or the time. Their U-Net reads the beamformed map as an image, and localization is a segmentation. The array is then which microphones go in, and six and twenty-four share one architecture. Depth, Adam, and the learning rate stay frozen across every cell.
+
+Two changes were measured before the grid, and the grid uses both. 32 base filters beat their 64, 72% against 63% within 10° on that check, and trained faster, so the narrower model is the one we report. A plain ReLU in the presence head died in one seed: localization still reached 72% within 10°, and detection sat at chance from the first epoch. The head is a leaky ReLU with slope 0.01, and the grid was restarted so every cell shares it.
+
+History is $K$ frames stacked as channels. A recurrent network was the alternative we did not take. The label is the mask of the current frame, so the present and a few tenths of a second ago should not share a weight, and a window under a second does not need unbounded memory. Stacking gives each slot its own kernel, and the stack is causal because it contains only the present and the past. We trained $K$ of 1, then 5, then 9. Five frames first read as a null, inside the seed noise. Deleting the past of weights that were already trained separated the two effects: a wider input costs accuracy before any history is used, and the history earns that cost back, mostly past 60 m. Nine frames, 0.9 s, is where that term wins, and only on the small array. Shuffling or reversing the frames afterwards costs about 0.2 points, so the cue the network actually uses is persistence. The true peak sits still on the grid while a sidelobe flickers.
+
+We stop on the hit rate, not on the loss. Training loss is still falling at the epoch we keep, and the loss on test 2 is rising, because the loss is a weighted sum over every pixel and a few confident mistakes dominate it. The decoded direction does not fall with that loss. Polar discs, in place of the rectangular map, and a Tversky loss, in place of weighted cross-entropy, were trained. Neither moved the claim; the grids are in notes 32, 36, and 47. A six-microphone subset chosen by a noise-free sidelobe search over 106,183 candidates then trained at 52%. The six we report is device 3, one physical recorder, because that is an array a deployment can field. The kinematic filter is applied to the decoded direction after training. It is not another model.
+
+The kinematic filter runs after the mask, on the decoded direction. It is not an input channel and not a reason to retrain. A DJI Air 3 in sport mode is published at 21 m/s, so a frame of 0.1 s allows 2.1 m of travel. At the GPS range that is a sky-angle cap, plus one 4° cell because the decoder sits on the grid. The stored direction updates at once when the new peak lies inside the cap, and only after five consecutive frames (half a second) when it does not. A hard hold with no second chance was tried; it wrecks the score, because some large jumps are the model correcting itself. A fixed 16° cap, the same rule with no range, landed within about a point of the range-dependent cap on the same-site 24-microphone run.
 
 ## 5. Experiments and results
 
@@ -104,15 +114,19 @@ Delay-and-sum on all 24 microphones reproduces their bars within a few degrees, 
 |---|---:|---:|
 | Typical sideways miss, 24 microphones | 3 m | 64 m |
 
-**Six microphones match twenty-four.** At one frame the gap is 69.3% ± 0.7 against 70.5% ± 1.5, inside seed noise; at five frames it is still inside that noise. At nine frames, 0.9 s, device 3 reaches 73.2% ± 1.4 and all 24 stays at 70.1% ± 2.7. Depth pays only on the small array. The six a geometric search called optimal, out of 106,183 subsets, scores 52.1% ± 0.8. The proxy was over-fit: it predicts the arrays it did not select at −0.80, and including its own winner collapses that to −0.36 (notes 22).
+**Six microphones match twenty-four.** At one frame the gap is 69.3% ± 0.7 against 70.5% ± 1.5, inside seed noise; at five frames it is still inside that noise. At nine frames, 0.9 s, device 3 reaches 73.2% ± 1.4 and all 24 stays at 70.1% ± 2.7. Depth pays only on the small array. The six a noise-free search called optimal scores 52.1% ± 0.8 once trained. The search used no audio: 106,183 non-coplanar subsets, a plane wave in 250 directions, scored by the strongest response more than 15° off the source. The proxy was over-fit: it predicts the arrays it did not select at −0.80, and including its own winner collapses that to −0.36 (notes 22). Device 3 was not that winner. It is one recorder.
+
+![Share of drone frames within 10° on the matched site, before the filter. The bar is the standard deviation across three seeds. Delay-and-sum is one run.](headline_within_10.png){width=86%}
 
 **The filter, on this reading.** Same site, every frame: 24 microphones at one frame go from 70% to 76% inside 10°, and device 3 at one frame from 69% to 75%. Once five or nine frames are already stacked it adds about a point, and device 3 at $K{=}9$ stays at 73%. The gain is in the far bins. Inside 30 m the cells do not move. On the new site, second look, the same one-frame filter goes from 52% to 61% (24 microphones) and from 54% to 61% (device 3), and device 3 at $K{=}9$ stays at 52%. The single-frame network plus the filter is the combination that moves; the stack learned the same smoothness on the training site and did not carry it. Where the raw track is stably wrong, the filter holds the error. It is not a repair for a bad array (notes 47).
 
 `utils/analysis/score_kinematic_filter.py` regenerates the filter and the sideways-miss numbers.
 
-History measured on weights that are already trained agrees with the table. Corrupting the past of the $K{=}5$ models costs 4.3 percentage points, in shrinking steps, and the climb ends near 0.8 s. Deleting history from the $K{=}9$ weights costs 5.1 points, block-resampled, Holm-adjusted $p = 0.0007$: about +0.5 inside 30 m, +8.7 at 60–90 m, and +21.8 at 90–120 m. Order does not matter. The cue is persistence. Lobe hops are what flicker, and they are what the filter removes. The smooth miss inside 30 m is the near field, and the filter does not fix it.
+History measured on weights that are already trained agrees with the table. Corrupting the past of the $K{=}5$ models costs 4.3 percentage points, in shrinking steps, and the climb ends near 0.8 s. Deleting history from the $K{=}9$ weights costs 5.1 points. The test is paired on one set of weights, and neighbouring frames are resampled in blocks because they are not independent trials. Holm-adjusted $p = 0.0007$: about +0.5 inside 30 m, +8.7 at 60–90 m, and +21.8 at 90–120 m. Order does not matter. The cue is persistence. Lobe hops are what flicker, and they are what the filter removes. The smooth miss inside 30 m is the near field, and the filter does not fix it.
 
-**Detection fails across scenes.** Held out one scene at a time, the per-channel detector scores 0.488 ± 0.056 AUROC. The 0.662 measured earlier was the recording: training and test ambient were two halves of one afternoon. Time and extra ambient both sharpen the training site and do not travel; the false-alarm wall on other soundscapes is in notes 30 and 38–39. Past about 90 m the drone is often not the loudest peak in the map, so neither detector nor localizer has a lock, and two thirds of labelled positives there are quieter than typical ambient. On the sealed new site the presence score reads 0.639 AUROC.
+![Gain from giving the same trained weights more real past frames, device 3 at nine frames, matched site. The weights and the input width stay fixed. The pooled gain is 5.1 points.](history_gain.png){width=86%}
+
+**Detection fails across scenes.** Held out one scene at a time, the per-channel detector scores 0.488 ± 0.056 AUROC. The 0.662 measured earlier was the recording: training and test ambient were two halves of one afternoon. Precision–recall does not rescue this. Drone frames are about 78% of the matched site, so a model that says "drone" on almost every frame has precision near 0.8. At the threshold that keeps 95% of drones, the map models fire on 84–96% of empty frames and precision is 0.78–0.80, the base rate (notes 43). The cross-scene AUROC is the number that does not hide that. Time and extra ambient both sharpen the training site and do not travel; the false-alarm wall on other soundscapes is in notes 30 and 38–39. Past about 90 m the drone is often not the loudest peak in the map, so neither detector nor localizer has a lock, and two thirds of labelled positives there are quieter than typical ambient. On the sealed new site the same one-microphone detector, averaged over all 24 channels, reads 0.639. One channel is 0.53. The quiet audio there is one minute of one scene, so this repeats the within-scene result at a smaller sample.
 
 ## 6. Analysis
 
@@ -127,11 +141,11 @@ Localization is supervised by geometry: every drone frame carries a direction. D
 - **Past about 90 m** the labelled drone is often quieter than ambient in the beamformed map. Early stopping on a pooled hit rate never selected for that bin. On the matched site, their stable-frame 14° remains ahead of us there.
 - **Inside 30 m** the learned cells sit below the next bin, and the filter leaves them there. On the new site, second look, the closest 30 m stay near 30% inside 10°. Steering assumes a plane wave, which a source metres from a 2 m array is not. Untested.
 - **Polar discs, Tversky loss, and the rest of the array list** were measured. None changes the claim above; the grids are in notes 32, 36, and 47. Sub-band count moves the hit rate by about half a point.
-- **One drone, one dataset, two sites.** The sealed new-site score, once, already said device 3 is not worse than all 24 (54.4% ± 4.6 against 52.2% ± 5.5 at one frame) while the seed spread widens to ±5–8 points and delay-and-sum wins the pool, because most of that flight is inside 90 m. The paper bins and the filter on that flight, above, are a second look at those dumps.
+- **One drone, one dataset, two sites.** The sealed new-site score, once, already said device 3 is not worse than all 24 (54.4% ± 4.6 against 52.2% ± 5.5 at one frame) while the seed spread widens to ±5–8 points and delay-and-sum wins the pool, because most of that flight is inside 90 m. The paper bins and the filter on that flight, above, are a second look at those dumps. A third site, and ambient from more than three scenes, are what would move the two results that did not transfer: the near field, and detection.
 
 ## 8. Contributions and reproduction
 
-**Dan Masad** framed the cheap-array question, wrote the pipeline the tables run on (dataset, cache, delay-and-sum, U-Net, detector, metrics), ran the experiments those tables quote, including the one sealed test-1 score, and wrote the original sections 1–7. **Shai Livshits** wrote the four-phase review and notes 43–47: the no-retrain error analyses, a new baseline under a true test-2 split and leave-one-flight-out, and the kinematic filter with the two readings in section 5. No ablation beat that baseline by more than seed spread. The new-site rows marked as a second look reuse the dumps from that sealed score. Sealed tables regenerate from the `GATE PASS` scripts in `README.md`. The filter and the sideways-miss numbers regenerate from `utils/analysis/score_kinematic_filter.py`. `docs/design_notes.md` is the lab record.
+**Dan Masad** framed the cheap-array question, wrote the pipeline the tables run on (dataset, cache, delay-and-sum, U-Net, detector, metrics), ran the experiments those tables quote, including the one sealed test-1 score, and wrote the original sections 1–7. **Shai Livshits** wrote the four-phase review and notes 43–47: the no-retrain error analyses and the kinematic filter with the two readings in section 5. The new-site rows marked as a second look reuse the dumps from that sealed score. Sealed tables regenerate from the `GATE PASS` scripts in `README.md`. The filter and the sideways-miss numbers regenerate from `utils/analysis/score_kinematic_filter.py`. `docs/design_notes.md` is the lab record.
 
 ## 9. References
 
