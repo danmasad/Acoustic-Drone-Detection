@@ -1208,8 +1208,9 @@ means every score is tied, and we hit that twice for unrelated reasons:
    well as 2.3× faster, so the narrower model is what the grid uses. The width they tuned by
    Optuna was tuned for their single-frame setup.
 
-The three runs trained before the dead-head fix are kept under `runs/_relu_head/` rather than
-deleted, and the grid was restarted so all 18 cells share one architecture. Comparability across
+The three runs trained before the dead-head fix are kept under `runs/_archive/` with a
+`_relu_head` suffix rather than deleted, next to `all24_K1_w32_b16_wce_s0_deadhead_check`, the
+short LeakyReLU rerun of the dead seed. The grid was restarted so all 18 cells share one architecture. Comparability across
 cells is the whole point of the protocol; a mixed-architecture grid would measure nothing.
 
 ## 21. The headline grid: what 18 runs actually say

@@ -68,7 +68,7 @@ Each directory holds the four recorder WAVs, the GPS csv, and `alignment_params.
 
 ### Run a saved model
 
-Checkpoints live in `runs/<experiment>/<run_id>/`. Experiments are `grid`, `loss`, `disc`, `arrays`, `bins`, `probes`, and `detector`. A dump is `results/preds/<experiment>/<run_id>_<split>_<order>.npz`. Summary tables are under `results/tables/`.
+Checkpoints live in `runs/<experiment>/<run_id>/`. Experiments are `grid`, `loss`, `disc`, `arrays`, `bins`, `probes`, and `detector`. `_archive` holds superseded runs that no result uses. A dump is `results/preds/<experiment>/<run_id>_<split>_<order>.npz`. Summary tables are under `results/tables/`.
 
 ```bash
 .venv/bin/python -m src.predict --split test_2 --runs device3_K1_w32_b16_wce_s0

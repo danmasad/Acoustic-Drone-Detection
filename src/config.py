@@ -21,11 +21,15 @@ FIGURES = REPO / "figures"
 # A run id names one training. The directory around it names the question that training
 # answered, so the headline grid, the loss comparison, and the detector stay apart.
 _COHERENCE = {"device1", "device4", "device1_3", "symmetric6", "quad4"}
+# Superseded runs, kept as evidence for design_notes section 20 and never part of a result.
+_ARCHIVED = ("_relu_head", "_deadhead_check")
 _DUMP_NAME = re.compile(r"^(?P<run>.+)_(?P<split>test_1|test_2|train)_(?P<order>causal|freeze\d+)$")
 
 
 def experiment_of(run_id: str) -> str:
     """Which results folder a run belongs in. Prefix order is the classification."""
+    if run_id.endswith(_ARCHIVED):
+        return "_archive"
     if run_id.startswith("detector_"):
         return "detector"
     if "tversky" in run_id:
