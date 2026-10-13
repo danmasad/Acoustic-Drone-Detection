@@ -1,13 +1,17 @@
 """Batching over the cached spectra, with frame stacking.
 
+One training example is a stack: a target frame plus the K-1 frames before it, so the
+network sees K x 100 ms of audio and is scored on the last frame only. A batch is B such
+stacks, so it reads B x K frames. Each frame is a target once per epoch and also serves as
+history for the K-1 targets after it.
+
 Two constraints shape this module:
 
-- **Batches never mix sessions.** The array was recalibrated between sessions, so steering
-  differs, and a batch has to share one steering tensor. Indices are shuffled globally and
+- **Batches never mix segments.** The array was recalibrated between sessions, so steering
+  differs, and a batch has to share one steering tensor. Targets are shuffled globally and
   then bucketed by segment, so batches stay random without mixing geometries.
-- **Stacks never cross a segment boundary.** A stack is the K frames ending at the labelled
-  frame, so it is causal by construction, and the first K-1 frames of each segment are
-  dropped rather than padded.
+- **Stacks never cross a segment boundary.** History is only the past, so stacks are causal,
+  and the first K-1 frames of each segment are never targets rather than being padded.
 """
 import numpy as np
 import torch
@@ -29,8 +33,7 @@ class SplitData:
     def __init__(self, split: str, channels, K: int = 1, band=MODEL_BAND,
                  radius: float = ANGULAR_THRESHOLD, verbose: bool = True, segs=None,
                  polar: bool = False):
-        self.split, self.channels, self.K, self.band = split, list(channels), K, band
-        self.polar = polar
+        self.split, self.channels, self.K = split, list(channels), K
         make_mask = polar_grid.target_mask if polar else target_mask
         self.segs, self.X, self.masks, self.meta = [], [], [], []
         self.index = []
@@ -68,10 +71,12 @@ class SplitData:
         return tot / max(n_drone, 1) / cells
 
     def batches(self, batch: int = 32, shuffle: bool = True, rng=None):
-        """Yields (segment index, X, mask, present, frame indices).
+        """Yields (segment index, X, mask, present, frame indices), one segment per batch.
 
-        X is (B, K, M, F) complex64: the caller beamforms, because that is the step whose
-        cost depends on the microphone subset and which belongs on the GPU.
+        X is (B, K, M, F) complex64: B stacks of K frames, M microphones, F bins. mask and
+        present belong to each stack's last frame. The caller beamforms, because that is
+        the step whose cost depends on the microphone subset and which belongs on the GPU.
+        The last batch of each segment may be smaller than `batch`.
         """
         order = np.arange(len(self.index))
         if shuffle:
@@ -88,8 +93,8 @@ class SplitData:
 
     def _make(self, s: int, frames: list[int]):
         f = np.asarray(frames)
-        offs = np.arange(-(self.K - 1), 1)                       # current frame last
-        idx = f[:, None] + offs[None, :]                         # (B, K)
+        offs = np.arange(-(self.K - 1), 1)                       # oldest first, target last
+        idx = f[:, None] + offs[None, :]                         # (B, K) frame numbers
         X = self.X[s][idx]                                       # (B, K, M, F)
         mask = self.masks[s][f]
         present = self.meta[s]["has_drone"][f]
@@ -101,6 +106,10 @@ class SplitData:
 def to_maps(bf, X: torch.Tensor, mean: float = 0.0, std: float = 1.0,
             projection=None) -> torch.Tensor:
     """(B, K, M, F) spectra -> (B, K*S, 23, 91) standardized decibel maps.
+
+    All B*K frames are beamformed in one call, then each stack's K maps of S sub-bands are
+    laid side by side as K*S input channels, oldest frame first. The network sees history
+    as extra channels, not as a time axis.
 
     With a `projection` (see `src.polar`) the maps come back as (B, K*S, 46, 46) on the disc.
     Standardization happens first so the projection's zero fill for the dead corners is the

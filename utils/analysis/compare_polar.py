@@ -1,6 +1,6 @@
 """Layout against loss, five cells, decided on the one bin the disc was built to fix.
 
-The hypothesis, from design notes section 7 and the reproduction gap in section 23. Our map is a
+The hypothesis. Our map is a
 rectangle of elevation by azimuth, which is a plate carree projection of the sky. Circular padding
 fixed its azimuth seam, but nothing fixed the other defect: near the zenith, one azimuth cell
 covers almost no solid angle, so a single learned kernel means different things at different
@@ -293,7 +293,7 @@ def main(split: str = "test_2") -> int:
             print(f"  Best of them is {best[0]} at {best[1]:.1f} deg against the baseline's "
                   f"{base_far.mean():.1f}.")
         print("  Read with the standing caveat: this bin is about 2.5% of drone frames and the "
-              "drone's beamformed peak sits below the ambient's there (notes section 25), so "
+              "drone's beamformed peak sits below the ambient's there, so "
               "neither a projection nor a loss was ever going to recover a cue the map does not "
               "contain.")
     results["gate_1"] = {"baseline_far_azimuth": float(base_far.mean()),

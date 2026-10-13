@@ -1,43 +1,34 @@
-"""Real continuous ambient audio, which is what a false-alarm rate actually needs.
+"""DEMAND: real continuous ambient audio for false-alarm rates.
 
-Our own no-drone audio is 5.6 minutes, so the finest non-zero false-alarm rate we can even
-express is one alarm in 5.6 minutes, or 10.7 per hour. Any claim below that is arithmetic, not
-measurement. DEMAND gives 90 minutes across 18 environments at our own 48 kHz, which takes the
-resolvable floor to about 0.7 per hour and, more usefully, replaces a single number with a
-number plus a spread over soundscapes.
+Test 2's no-drone audio is 5.6 minutes, so the finest non-zero false-alarm rate it can
+measure is one alarm in 5.6 minutes, or 10.7 per hour. DEMAND gives 90 minutes across 18
+environments at our 48 kHz, which lowers that floor to about 0.7 per hour and reports a spread
+over soundscapes alongside the overall rate.
 
-What this can and cannot say:
+It measures how often a detector fires on real ambient it has never heard, per environment. It
+does not say what our array would record there: the microphones, gain and wind differ.
 
-- It **can** say how often a detector fires on real-world noise it has never heard, per
-  environment, which is the closest thing to a deployment figure this project can produce.
-- It **cannot** say what our array would do in those places. Different microphones, different
-  gain, different wind. The rate is reported as indicative with the mismatch stated, next to
-  the coarse-but-ours 10.7 per hour resolution from the array's own ambient.
+Only single channels are used, so only the per-channel detector can be evaluated. Replicating
+one channel 24 times for the map model would create a spatial pattern no real source produces.
 
-Only single channels are used, which is why the geometry mismatch does not matter: the
-per-channel detector reads one microphone at a time by construction. The map model cannot be
-evaluated on this at all, and pretending otherwise by replicating one channel 24 times would
-manufacture a spatial pattern no real source produces.
-
-Framing is deliberately identical to `src.esc50` and to our own cache — the same 4800-sample
-non-overlapping rectangular window and the same band selection — so a frame from DEMAND is
-interchangeable with a frame of ours as far as the model is concerned.
+Framing matches `src.esc50` and our own cache: the same band-pass, 4800-sample rectangular
+frames and frequency bins, so a DEMAND frame is interchangeable with one of ours.
 """
+import argparse
 import time
 from pathlib import Path
 
 import numpy as np
 from scipy.io import wavfile
-from scipy.signal import butter, filtfilt
 
 from .config import CACHE, CACHE_BAND, CHUNK, DATA, SR
-from .stft_cache import FILTER_BAND, FILTER_ORDER
+from .stft_cache import bandpass
 
 DEMAND_DIR = DATA / "demand"
 CACHE_PATH = CACHE / "demand" / "spectra.npz"
 
-# The 18 scenes, grouped as DEMAND groups them. The grouping is the point: a false-alarm rate
-# in a park and one on a metro platform are different claims, and averaging them hides both.
+# The 18 scenes in DEMAND's own groups. Rates are reported per group, since a park and a metro
+# platform are different conditions.
 GROUPS = {
     "domestic": ("DKITCHEN", "DLIVING", "DWASHING"),
     "nature": ("NFIELD", "NPARK", "NRIVER"),
@@ -48,8 +39,8 @@ GROUPS = {
 }
 GROUP_OF = {s: g for g, ss in GROUPS.items() for s in ss}
 
-# Outdoor scenes with wind, traffic and open sky are the honest comparison for an array that
-# sits in a field. Indoor scenes are reported too, but they are an easier problem.
+# Outdoor scenes, with wind, traffic and open sky, are the closest match to an array in a
+# field. Indoor scenes are reported too.
 OUTDOOR = ("NFIELD", "NPARK", "NRIVER", "SPSQUARE", "STRAFFIC", "PSTATION")
 
 
@@ -61,25 +52,23 @@ def build_cache(overwrite: bool = False, verbose: bool = True) -> Path:
         return CACHE_PATH
     wavs = sorted(DEMAND_DIR.glob("*_ch01.wav"))
     if not wavs:
-        raise FileNotFoundError(f"no scenes in {DEMAND_DIR}; run utils/download_demand.sh")
+        raise FileNotFoundError(f"no scenes in {DEMAND_DIR}; run utils/setup/download_demand.sh")
 
     freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
     sel = (freqs >= CACHE_BAND[0]) & (freqs <= CACHE_BAND[1])
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
 
     spectra, scene, t0 = [], [], time.time()
     for path in wavs:
         name = path.name.split("_")[0]
         sr, x = wavfile.read(path)
         if sr != SR:
-            raise ValueError(f"{path.name}: {sr} Hz, expected {SR}; the 48k release is the "
-                             f"one we want, precisely so there is no resampling to defend")
+            raise ValueError(f"{path.name}: {sr} Hz, expected {SR} "
+                             f"(the 48 kHz release, so nothing is resampled)")
         x = np.asarray(x, np.float64)
         if x.ndim > 1:
             x = x[:, 0]
         n = len(x) // CHUNK
-        y = filtfilt(b, a, x)[:n * CHUNK].reshape(n, CHUNK)
+        y = bandpass(x)[:n * CHUNK].reshape(n, CHUNK)
         spectra.append(np.fft.rfft(y, axis=1)[:, sel].astype(np.complex64))
         scene += [name] * n
         if verbose:
@@ -98,13 +87,10 @@ def build_cache(overwrite: bool = False, verbose: bool = True) -> Path:
 class Ambient:
     """Framed spectra of every DEMAND scene, all of them labelled no-drone.
 
-    A gain question has to be answered before any of this means anything: DEMAND was recorded
-    with its own microphones and its own preamp settings, so its absolute level says nothing
-    about how loud that place would have been through our array. Rescaling each scene so its
-    median in-band frame energy matches our own ambient's median is the least-arbitrary choice
-    available — it holds the recording level fixed and lets the *spectral shape* and the
-    *variability* of the scene be what the detector responds to. The alternative, using DEMAND's
-    raw level, would confound "this soundscape is confusing" with "this recording was louder".
+    DEMAND's absolute level reflects its own microphones and gain, not our array. With
+    `reference_energy`, each scene is rescaled so its median in-band frame energy equals our
+    ambient's median, so the detector responds to the scene's spectral shape and variability
+    rather than to recording level.
     """
 
     def __init__(self, reference_energy: float | None = None, verbose: bool = True):
@@ -127,6 +113,7 @@ class Ambient:
                   + (", level-matched to our own ambient" if self.gain else ""))
 
     def hours(self, scene: str | None = None) -> float:
+        """Duration in hours of one scene, or of all scenes when `scene` is None."""
         n = len(self.spectra) if scene is None else int((self.scene == scene).sum())
         return n * CHUNK / SR / 3600.0
 
@@ -143,8 +130,6 @@ class Ambient:
 
 
 if __name__ == "__main__":
-    import argparse
-
     p = argparse.ArgumentParser(description="Build the DEMAND spectral cache.")
     p.add_argument("--overwrite", action="store_true")
     a = p.parse_args()

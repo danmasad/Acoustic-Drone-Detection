@@ -22,8 +22,8 @@ second figure is near 90% for reasons that are mostly about the extremity of the
 Audibility is measured with **absolute beamformed peak energy**, not peak-to-mean contrast.
 Both are in the baseline dumps, and contrast is at or below chance as a detector on this data
 (AUROC 0.455 on all24, 0.549 on device3, against 0.649 and 0.689 for peak energy), so it would
-be a proxy for nothing. Peak energy is also what design notes section 23 used, which keeps one
-definition of audibility across the whole report.
+be a proxy for nothing. Peak energy is also what the delay-and-sum comparison uses, which keeps
+one definition of audibility across the whole report.
 
 A hard limit to keep in view: test 2 holds only minutes of no-drone audio, so the finest
 non-zero false-alarm rate that exists is one alarm over that duration. Budgets below it cannot
@@ -111,7 +111,7 @@ def localization_when_audible(pred: dict, neg_p95: float, bins) -> dict:
 
     Always a pair: the loud subset alone selects the frames we like, the pooled number alone
     credits frames with no cue. The loud frames are the near ones, where the network is worst
-    (plane-wave steering breaks in the near field); see docs/design_notes.md section 25.
+    (plane-wave steering breaks in the near field).
     """
     d = pred["has_drone"].astype(bool)
     err = angular_distance(pred["pred_az"][d], pred["pred_el"][d],

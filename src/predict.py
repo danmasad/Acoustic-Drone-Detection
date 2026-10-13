@@ -1,22 +1,10 @@
 """Per-frame predictions from a finished run, cached to disk.
 
-Everything in `metrics.json` is a summary: one number per run per metric. Several questions we
-still owe the report cannot be answered from summaries, only from the frames themselves:
-
-- **Detection against range.** A pooled AUROC hides that the drone is inaudible past 100 m.
-- **Temporal integration.** Smoothing a score over a window needs the frames back in time
-  order, which means carrying the segment and frame index alongside every prediction.
-- **Frame-paired comparisons.** Asking whether K=5 beats K=1 *on the same frame* is far more
-  sensitive than comparing two pooled means, and it needs both runs' per-frame output.
-
-So this module runs a checkpoint once and writes every per-frame quantity to
-`results/preds/`. The dumps are small (tens of thousands of frames, a dozen float32 columns)
-and they are committed, which is what makes every analysis script a pure function of files in
-the repository rather than of 4 GB of cache and a GPU.
-
-`cnn_predictions` was lifted out of `utils/analysis/check_vs_paper.py`, which now imports it, so there
-is one implementation of "run the model and decode a direction" rather than two that can
-drift apart.
+`metrics.json` holds one summary number per metric. Detection against range, smoothing over
+time, and frame-paired comparisons between runs need the frames themselves, so this module
+runs a checkpoint once and writes every per-frame quantity to `results/preds/`. The files
+are small and committed, so every analysis script reads files in the repository instead of
+the 4 GB cache and a GPU.
 """
 import argparse
 import json
@@ -24,10 +12,11 @@ import json
 import numpy as np
 import torch
 
-from . import baseline, metrics, polar
-from .config import AZ, EL, MIC_SUBSETS, pred_file, run_dir
+from . import baseline, beamform, metrics, polar
+from .config import AZ, EL, MIC_SUBSETS, RUNS, pred_file, run_dir
 from .data import SplitData, to_maps
 from .models import UNet, decode_mask
+from .train import beamformer_factory, reorder
 
 # Columns every dump carries, whatever produced it, so downstream analysis never branches on
 # provenance. `seg` and `frame` are what make time order and per-scene grouping recoverable.
@@ -65,9 +54,6 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
     `order` accepts anything `src.train.reorder` understands, including the `freeze{j}`
     family, so a history-depth sweep is a loop over this function with one set of weights.
     """
-    from . import beamform
-    from .train import beamformer_factory, reorder
-
     name = f"{run_id}_{split}_{order}"
     if pred_file(name).exists() and not overwrite:
         if verbose:
@@ -101,12 +87,12 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
                     projection=proj)
         mask_logits, presence = model(x)
         k = mask_logits.flatten(1).argmax(1)
-        # Both decoders, every time. They disagree by a lot — the centroid is the paper's and
-        # is what the report quotes — and running both here costs one extra pooling pass.
+        # Both decoders: centroid is the paper's rule and what the report quotes; argmax is the
+        # brightest cell.
         c_az, c_el = decode_mask(mask_logits, mode="centroid", dirs=dirs, valid=valid)
         a_az, a_el = decode_mask(mask_logits, mode="argmax", dirs=dirs, valid=valid)
-        # Logits, never sigmoid: float32 sigmoid saturates to exactly 1.0 above a logit of
-        # about 17, which once turned a working head into an AUROC of 0.5000 through ties.
+        # Logits, not sigmoid: metrics only need the ranking, and float32 sigmoid rounds every
+        # logit above about 17 to exactly 1.0, which ties confident scores.
         cols["score"].append(presence.cpu().numpy())
         n_cols = mask_logits.shape[-1]
         cols["el_idx"].append((k // n_cols).cpu().numpy())
@@ -134,10 +120,9 @@ def cnn_predictions(run_id: str, split: str = "test_2", order: str = "causal",
 
 def baseline_predictions(split: str = "test_2", subset: str = "all24", device: str = "auto",
                          overwrite: bool = False, verbose: bool = True) -> dict:
-    """The classical DAS baseline's per-frame output, in the same layout as a CNN dump.
+    """The delay-and-sum baseline's per-frame output, in the same layout as a CNN file.
 
-    `results/baseline.json` only ever stored summaries, so the audibility question — how many
-    labelled-positive frames carry no beamformed evidence at all — had no data to run on.
+    `score` is the beamformed peak in dB.
     """
     name = f"baseline_{subset}_{split}"
     if pred_file(name).exists() and not overwrite:
@@ -164,9 +149,8 @@ def verify(pred: dict, run_id: str, split: str = "test_2", block: str | None = N
            tol: float = 1e-6, polar: bool = False) -> list[str]:
     """Recompute the run's headline metrics from the dump and diff them against metrics.json.
 
-    The gate for A1: if a dump cannot reproduce the numbers the run already reported, every
-    analysis built on it is worthless, and the failure should surface here rather than as a
-    surprising result three stages later.
+    If the file can't reproduce the run's own numbers, every analysis built on it is wrong;
+    this catches it here. Returns one line per metric that differs, empty when all match.
     """
     saved = json.loads((run_dir(run_id) / "metrics.json").read_text())
     ref = saved[block] if block else saved[split]
@@ -185,7 +169,6 @@ def verify(pred: dict, run_id: str, split: str = "test_2", block: str | None = N
 
 def all_runs(pattern: str = "_w32_b16_wce_s") -> list[str]:
     """Finished runs with a checkpoint, excluding archived and probe directories."""
-    from .config import RUNS
     found = []
     for group in RUNS.iterdir():
         if not group.is_dir() or group.name.startswith("_"):
@@ -228,4 +211,4 @@ if __name__ == "__main__":
     for run_id, bad in failures:
         print(f"  {run_id}: " + "; ".join(bad))
     if not failures:
-        print(f"  every causal dump reproduces its own metrics.json to 1e-6")
+        print("  every causal dump reproduces its own metrics.json to 1e-6")

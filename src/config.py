@@ -59,8 +59,8 @@ def run_dir(run_id: str) -> Path:
     """The folder of one training run: runs/<experiment>/<run_id>/.
 
     It holds config.json (the settings), metrics.json (the scores and the
-    per-epoch history), and best.pt (the weights) for the runs that keep them
-    for every reader and writer of a run.
+    per-epoch history), and best.pt (the weights), for the runs that keep them.
+    Every writer and reader of a run goes through this path.
     """
     return RUNS / experiment_of(run_id) / run_id
 
@@ -153,7 +153,7 @@ GRID_SHAPE = (len(EL), len(AZ))  # (23, 91): elevation is rows, azimuth is colum
 # runtime flag instead of another pass over 24 GB of audio.
 CACHE_BAND = (200.0, 4000.0)     # 381 native bins
 MODEL_BAND = (200.0, 2200.0)     # the paper's band
-N_SUBBANDS = 16                  # our reconstruction of their F=16 (design_notes section 16)
+N_SUBBANDS = 16                  # our reconstruction of their F=16
 
 
 def run_id(subset: str, K: int, *, base: int = 32, subbands: int = N_SUBBANDS,
@@ -184,7 +184,7 @@ HIT_THRESHOLDS = (5, 10, 20)     # strict / inherited / operational
 # Pinned explicitly, never recomputed at run time: the array has 3-fold symmetry so
 # several subsets tie exactly, and a re-run could silently return a mirror image.
 # Sidelobe figures are the 95th percentile worst false peak over 250 source directions
-# from the dense search in results/search/subset_search.npz (design_notes section 14).
+# from the dense search in results/search/subset_search.npz.
 _DEV = {k: list(range(CH_PER_DEVICE * k, CH_PER_DEVICE * (k + 1))) for k in range(4)}
 
 MIC_SUBSETS = {

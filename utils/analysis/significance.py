@@ -331,7 +331,7 @@ def cell_ci(subset: str, K: int, split: str = "test_2", tag: str = "wce") -> dic
     standard error enters the combined interval as seed_sd / sqrt(n_seeds). The combined
     half-width adds the two in quadrature at MAIN_BLOCK, which treats them as independent.
     """
-    runs = [f"{subset}_K{K}_w32_b16_{tag}_s{s}" for s in SEEDS]
+    runs = [run_id(subset, K, loss=tag, seed=s) for s in SEEDS]
     runs = [r for r in runs if pred_file(f"{r}_{split}_causal").exists()]
     if not runs:
         return None
@@ -357,7 +357,7 @@ def cell_ci(subset: str, K: int, split: str = "test_2", tag: str = "wce") -> dic
 def hits_from_metrics(subset: str, K: int, tag: str = "wce") -> list[float]:
     out = []
     for s in SEEDS:
-        p = run_dir(f"{subset}_K{K}_w32_b16_{tag}_s{s}") / "metrics.json"
+        p = run_dir(run_id(subset, K, loss=tag, seed=s)) / "metrics.json"
         if p.exists():
             out.append(100 * json.loads(p.read_text())["test_2"]["hit_10deg"])
     return out

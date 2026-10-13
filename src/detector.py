@@ -4,18 +4,19 @@ Separate from the map-based model on purpose. Detection is a question about timb
 drone is a set of harmonics from the blade-pass frequency — and answering it per channel has
 four consequences:
 
-- No cross-channel structure to exploit, so injected mono audio (ESC-50, Al-Emadi) can be
-  mixed in later without the synthetic-spatial shortcut that plane-wave rendering creates.
-- 24 training samples per frame instead of one, which is what the starved detection head
-  needs: 4,911 negative frames become 117,864 negative examples.
-- Detection becomes independent of microphone count by construction, so the 6-versus-24
-  comparison isolates to localization, where the physics actually differs.
-- It costs minutes, not hours: the model is ~100k parameters over a 381-bin spectrum.
+- No cross-channel structure to exploit, so mono audio (ESC-50, DEMAND) can be mixed in
+  without creating a spatial pattern no real source produces.
+- 24 training samples per frame instead of one: 4,911 negative frames become 117,864
+  negative examples.
+- Detection is independent of microphone count by construction, so the 6-versus-24
+  comparison is purely about localization.
+- It trains in minutes: 85k parameters over a 381-bin spectrum.
 
-Frame-level decisions come from averaging per-channel logits, which also lets us report how
-many microphones a stable decision needs.
+Frame-level decisions come from averaging per-channel logits, which also shows how many
+microphones a stable decision needs.
 """
 import argparse
+import copy
 import json
 import time
 
@@ -24,11 +25,11 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from . import metrics
+from . import demand, metrics
 from .beamform import pick_device
 from .config import CACHE_BAND, CHUNK, MIC_SUBSETS, SR, run_dir
 from .data import SplitData
-from .esc50 import HARD_CLASSES
+from .esc50 import HARD_CLASSES, TEST_FOLD, Confusers
 
 
 def log_filterbank(freqs: np.ndarray, n_bins: int = 64,
@@ -53,10 +54,8 @@ def log_filterbank(freqs: np.ndarray, n_bins: int = 64,
     interpolate rather than measure. Over 200-4000 Hz that allows roughly 64 bins, which also
     shrinks the input from 381 values to 64.
 
-    Two costs, reported either way: the top of the band is coarsened, so high harmonics blur
-    together (acceptable — the low harmonics carry the distinctiveness), and if the detector is
-    keying on broadband energy rather than comb structure then this changes nothing, in which
-    case the null result says something about what it learned.
+    Cost: the top of the band is coarsened, so high harmonics blur together; the low harmonics
+    carry the distinctiveness.
     """
     edges = np.geomspace(band[0], band[1], n_bins + 2)
     bank = np.zeros((n_bins, len(freqs)), np.float32)
@@ -188,30 +187,19 @@ def split_for_early_stopping(data: SplitData, fraction: float = 0.2,
                              block: int = MONITOR_BLOCK):
     """Split one SplitData into (fit, monitor) by holding out interleaved blocks of frames.
 
-    Why this exists: with a held-out *scene* as the test set, early stopping on that scene is
-    selection on the test set, and here it is not a small effect. The detector's AUROC on an
-    unseen scene swings between 0.36 and 0.80 from one epoch to the next, so "best epoch on the
-    held-out scene" would report a maximum over twelve draws that a rerun could not reproduce.
-    The monitor set therefore has to come out of the training scenes.
+    - Out of the training scenes: early stopping on a held-out test scene would be selection
+      on the test set, and the detector's AUROC on an unseen scene swings from 0.36 to 0.80
+      between epochs.
+    - Interleaved blocks, not the tail: a segment's tail is the far, quiet end of a flight or
+      the moment before takeoff, which would pair the hardest positives with the most
+      drone-like negatives.
+    - Blocks, not random frames: frames 100 ms apart are near-duplicates, so a random holdout
+      would measure memorization. With 30-second blocks only boundary frames have a
+      neighbour across the split.
 
-    Why blocks rather than a contiguous tail, which is what this did first: the tail of a flight
-    segment is the end of the flight, where the drone is far away and quiet, and the tail of a
-    pre-takeoff segment is the moment just before the motors start. A tail split therefore pairs
-    the hardest positives against the most drone-adjacent negatives, and it showed: one fold's
-    monitor AUROC sat below 0.4 for most of training, which says more about the split than about
-    the model. Interleaving 30-second blocks keeps the monitor set representative in range,
-    level and class balance.
-
-    Why not random frames: frames 100 ms apart are near-duplicates, so a random holdout puts a
-    frame's own neighbours on the other side of the split and measures memorization. With
-    30-second blocks only the two frames at each block boundary have a neighbour across it.
-
-    This monitors convergence, not generalization — it is the same scene. Generalization is what
-    the held-out scene measures, once, at the end. The copy is shallow on purpose: the two views
-    share the spectra, which are gigabytes.
+    This monitors convergence on the same scenes; the held-out scene measures generalization,
+    once, at the end. The copy is shallow so the two views share the spectra.
     """
-    import copy
-
     every = max(int(round(1.0 / max(fraction, 1e-6))), 2)
     fit_rows, monitor_rows = [], []
     for s in range(len(data.segs)):
@@ -254,7 +242,7 @@ def ambient_reference_energy(data: SplitData) -> float:
 
     DEMAND scenes are level-matched to this before use as negatives. Training split only
     (test 2 here would be a leak), and read off the labelled frames rather than sampled
-    batches so it does not depend on the seed. docs/design_notes.md section 38.
+    batches so it does not depend on the seed.
     """
     got = []
     for X, meta in zip(data.X, data.meta):
@@ -273,8 +261,6 @@ def ambient_pool(groups, data: SplitData, K: int, verbose: bool = True):
     recording across 24 channels would hand the map model a spatial pattern no source produces,
     which is why this path exists only for the per-channel detector.
     """
-    from . import demand
-
     ref = ambient_reference_energy(data)
     amb = demand.Ambient(reference_energy=ref, verbose=verbose)
     scenes = [s for g in groups for s in demand.GROUPS[g] if s in amb.scenes]
@@ -294,17 +280,15 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
     """One detector. `confusers` mixes ESC-50 into training frames, `log_bins` switches the
     frequency axis to a log-spaced filterbank of that many bins (0 keeps the linear axis).
 
-    `monitor_fraction > 0` moves early stopping onto the tail of the *training* scenes, which is
-    required whenever the validation set is a held-out scene whose number will be reported.
+    `monitor_fraction > 0` moves early stopping onto interleaved blocks of the *training* scenes
+    (`split_for_early_stopping`), which is required whenever the validation set is a held-out
+    scene whose number will be reported.
 
     `ambient_groups` names DEMAND scene groups to draw extra negatives from, `ambient_frac` how
-    many relative to the channel-frames in each batch. This is addition, not mixing: the frames
-    are real continuous ambient labelled no-drone, which is the thing the detector was firing on
-    at 24,881 alarms per hour. Groups not named here are what the false-alarm rate is then
-    measured on, so the question stays "does hearing real ambient generalize to other ambient".
+    many relative to the channel-frames in each batch. These are added as whole frames labelled
+    no-drone, not mixed into ours. The groups not named are where the false-alarm rate is then
+    measured, so the test is whether hearing some real ambient generalizes to other ambient.
     """
-    from .beamform import pick_device
-
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
     dev = pick_device(device)
@@ -339,7 +323,6 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
     # number is the difference: what mixing buys against a model that never saw one.
     conf_train = conf_test = None
     try:
-        from .esc50 import TEST_FOLD, Confusers
         conf_test = Confusers(folds=(TEST_FOLD,), verbose=verbose)
         if confusers:
             conf_train = Confusers(folds=tuple(f for f in range(1, 6) if f != TEST_FOLD),
@@ -384,9 +367,8 @@ def train(K: int = 1, seed: int = 0, lr: float = 1e-3, batch: int = 32, width: i
             # Every channel of a frame inherits the frame's label.
             y = present.to(dev).unsqueeze(1).expand(-1, len(channels)).reshape(-1)
             if pool is not None:
-                # Sampled with replacement each batch rather than iterated: the pool is 45
-                # minutes of ambient against 60 of ours, and an epoch defined by our frames
-                # should see a fresh draw of it rather than a fixed pairing.
+                # Sampled with replacement each batch: the pool holds 75 minutes of ambient
+                # (five groups), and each epoch over our frames sees a fresh draw of it.
                 pick = rng.integers(0, len(pool), max(1, int(round(ambient_frac * len(y)))))
                 xa = spectra(torch.from_numpy(pool[pick]).to(dev), *stats, bank=bank)
                 x = torch.cat([x, xa])

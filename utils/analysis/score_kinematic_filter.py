@@ -8,7 +8,7 @@ the decision, only to the scoring afterwards. Runs on dumps in results/preds/; n
 Two summaries, and they do not convert into each other. **External** is the paper's: mean
 angular error in their 0-50 / 50-100 / 100-200 m bins, U-Net rows on stable frames only.
 **Internal** is ours: every drone frame, share inside 10° in 30 m bins, and the sideways
-miss range * sin(error). docs/design_notes.md section 47.
+miss range * sin(error).
 
     .venv/bin/python utils/analysis/score_kinematic_filter.py
     .venv/bin/python utils/analysis/score_kinematic_filter.py --split test_1

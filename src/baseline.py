@@ -1,17 +1,15 @@
-"""Classical delay-and-sum baseline: brightest pixel of the energy map.
+"""Classical delay-and-sum baseline: the brightest cell of the energy map.
 
-This is the system the paper compares against, and the one whose failures motivate the
-whole project: it has no notion of what a drone sounds like, so it points at whatever is
-loudest, and it cannot reject the phantom peaks a thinned array invents.
+The system the paper compares against. It has no model of what a drone sounds like, so it
+points at whatever is loudest, including the false peaks a thinned array produces.
 
-Two detection statistics, because the choice is not obvious and the paper never states one:
+Two detection statistics, since the paper never states one:
 
-- `peak_db`: absolute energy of the brightest direction. Loud means drone. Fails on wind.
-- `contrast_db`: brightest direction relative to the map's own mean. Focused means drone.
-  Scale-free, so it survives gain and distance changes, and it is the fairer baseline.
-
-Reporting both keeps us honest: beating a deliberately weak baseline would prove nothing.
+- `peak_db`: energy of the brightest direction. The better detector on this data.
+- `contrast_db`: the brightest direction relative to the map's mean. Scale-free, but at or
+  below chance here (AUROC 0.455 on all24, 0.549 on device3).
 """
+import argparse
 import json
 
 import numpy as np
@@ -26,12 +24,10 @@ from .stft_cache import load_cache
 @torch.no_grad()
 def run_split(split: str, subset: str = "all24", batch: int = 64,
               device: str = "auto", verbose: bool = True) -> dict:
-    """Brightest-pixel results over every segment of a split, concatenated.
+    """Brightest-cell results for every segment of a split, concatenated.
 
-    `seg` and `frame` are carried through so callers can put frames back in time order.
-    Concatenating without them loses the only thing that makes temporal analysis possible,
-    and the segment order here is `segments(split)`, the same order `SplitData` uses, so
-    baseline and network dumps index segments identically.
+    `seg` and `frame` follow `segments(split)`, the same order `SplitData` uses, so baseline
+    and network files index frames identically.
     """
     channels = MIC_SUBSETS[subset]
     out = {k: [] for k in ("peak_db", "contrast_db", "el_idx", "az_idx",
@@ -65,6 +61,7 @@ def run_split(split: str, subset: str = "all24", batch: int = 64,
 
 
 def evaluate(split: str, subset: str = "all24", **kw) -> dict:
+    """Both detection statistics on one split, summarized by `metrics.summarize`."""
     r = run_split(split, subset, **kw)
     return {score: summarize(r[score], r["has_drone"], r["el_idx"], r["az_idx"],
                              r["az"], r["el"], r["range_m"])
@@ -72,8 +69,6 @@ def evaluate(split: str, subset: str = "all24", **kw) -> dict:
 
 
 if __name__ == "__main__":
-    import argparse
-
     p = argparse.ArgumentParser(description="Classical DAS baseline.")
     p.add_argument("--subsets", nargs="*", default=["all24", "device3", "best6"])
     # test_1 stays sealed until the final numbers, so it is opt-in even here: the baseline

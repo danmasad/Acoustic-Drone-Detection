@@ -8,16 +8,15 @@ One pixel is then roughly the same angle everywhere, and azimuth has no seam. Th
 (21.5% of pixels) describe no direction and are held at zero. N = 46 puts 23 radial cells
 across 90 degrees, matching the rectangular grid's 4 degree spacing. The target is the same
 spherical cap rasterized onto the disc's own direction vectors, never a resampled rectangle.
-docs/design_notes.md sections 7, 32 and 36.
 """
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 from .config import AZ, EL
+from .geometry import unit_vectors
 
 N = 46
-SHAPE = (N, N)
 DEAD_FRACTION = 1.0 - np.pi / 4
 
 
@@ -36,20 +35,16 @@ def cell_angles(n: int = N) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def cell_directions(n: int = N) -> tuple[np.ndarray, np.ndarray]:
     """((n*n, 3) unit vectors, (n*n,) validity). Dead cells get the zenith as a placeholder."""
     az, el, valid = cell_angles(n)
-    el = np.where(valid, el, 90.0)
-    a, e = np.radians(az), np.radians(el)
-    dirs = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], -1)
+    dirs = unit_vectors(az, np.where(valid, el, 90.0))
     return dirs.reshape(-1, 3), valid.reshape(-1)
 
 
 def sampling_grid(n: int = N) -> torch.Tensor:
     """(1, n, n, 2) grid for `F.grid_sample` on a (B, C, len(EL), len(AZ)) map.
 
-    Dead corners map to negative elevation, i.e. outside the source, so zero padding handles the
-    far ones. It does not handle the near ones: a cell at radius 1.02 sits four tenths of a cell
-    past the horizon row, and bilinear interpolation there returns most of that row's value
-    rather than zero. The validity mask in `Projection` is what actually clears them, and the
-    gate in `utils/validate/check_polar.py` exists because this was wrong the first time.
+    Each disc cell points at its (azimuth, elevation) on the rectangle. Dead corners fall below
+    the horizon; the ones just past the rim still interpolate energy from the horizon row, so
+    `Projection` clears them with the validity mask.
     """
     az, el, _ = cell_angles(n)
     x = (az - AZ[0]) / (AZ[-1] - AZ[0]) * 2.0 - 1.0
@@ -61,7 +56,6 @@ class Projection:
     """Cached tensors for one device, since the grid is fixed for the whole run."""
 
     def __init__(self, n: int = N, device=None):
-        self.n = n
         self.grid = sampling_grid(n).to(device)
         dirs, valid = cell_directions(n)
         self.dirs = torch.from_numpy(dirs.astype(np.float32)).to(device)
@@ -82,22 +76,11 @@ class Projection:
 
 
 class NativeDisc:
-    """The disc without the resampling step: steer the beamformer at the disc's own cells.
+    """The disc steered directly: the beamformer is aimed at the disc's own cells.
 
-    `Projection` builds the disc from the finished rectangular map, so its input is a bilinear
-    interpolation of cells 4 degrees apart in azimuth painted onto cells that are 2.5 degrees
-    apart at the rim — the map is smoothed on the way in while the target stays a hard cap
-    rasterized at full disc precision. A far drone is a low-contrast peak, which is exactly what
-    that smoothing costs the most, and the far bin is where the resampled disc lost: 82 degrees
-    of mean azimuth error against the rectangle's 57.
-
-    Steering natively removes the interpolation entirely. `cell_directions` already gives one
-    unit vector per cell and `beamform.Beamformer` already accepts an arbitrary direction set,
-    so the beamformer returns an (n, n) disc directly and this class only has to clear the dead
-    corners. Cost is unchanged: 2116 disc directions against the rectangle's 2093.
-
-    Interchangeable with `Projection` from the caller's side — same `dirs`, `valid`, `keep`, and
-    the same one-argument call — so it drops into the `projection=` slot of `data.to_maps`.
+    The map is sharp at disc resolution, with no interpolation from the rectangle. It has the
+    same `dirs`, `valid`, `keep` and call as `Projection`, so it fits the `projection=` slot of
+    `data.to_maps`. Cost is 2116 directions against the rectangle's 2093.
     """
 
     def __init__(self, n: int = N, device=None):
@@ -127,9 +110,8 @@ class NativeDisc:
 def target_mask(az, el, radius_deg: float, n: int = N, chunk: int = 2048) -> np.ndarray:
     """(b, n, n) uint8: the same spherical cap as `labels.target_mask`, on the disc's cells.
 
-    Rasterized from the cap rather than resampled from the rectangular mask. Dead cells can
-    never be positive because their placeholder direction is the zenith, which is inside the cap
-    only when the drone is overhead — so they are masked out explicitly.
+    Drawn from the cap on the disc's own directions. Dead cells carry the zenith as a placeholder,
+    which falls inside the cap whenever the drone is overhead, so they are masked out.
     """
     dirs, valid = cell_directions(n)
     az, el = np.asarray(az, float), np.asarray(el, float)
@@ -139,9 +121,7 @@ def target_mask(az, el, radius_deg: float, n: int = N, chunk: int = 2048) -> np.
         ok = ~np.isnan(a)
         if not ok.any():
             continue
-        src = np.stack([np.cos(np.radians(e)) * np.cos(np.radians(a)),
-                        np.cos(np.radians(e)) * np.sin(np.radians(a)),
-                        np.sin(np.radians(e))], -1)
+        src = unit_vectors(a, e)
         src[~ok] = 0.0
         ang = np.degrees(np.arccos(np.clip(dirs @ src.T, -1.0, 1.0)))          # (n*n, b)
         m = (ang.T <= radius_deg) & valid[None, :]

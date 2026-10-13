@@ -57,7 +57,7 @@ def k9_won() -> bool:
     hits: dict[int, list[float]] = {}
     for K in (5, 9):
         for seed in SEEDS:
-            path = run_dir(f"device3_K{K}_w32_b16_wce_s{seed}") / "metrics.json"
+            path = run_dir(config_run_id("device3", K, seed=seed)) / "metrics.json"
             if path.exists():
                 hits.setdefault(K, []).append(
                     json.loads(path.read_text())["test_2"]["hit_10deg"])
@@ -75,7 +75,7 @@ def cnn_rows() -> list[dict]:
         print("  K=9 beat K=5 on test 2, so it is scored here too")
     for subset, K in cells:
         for seed in SEEDS:
-            run_id = f"{subset}_K{K}_w32_b16_wce_s{seed}"
+            run_id = config_run_id(subset, K, seed=seed)
             if not (run_dir(run_id) / "best.pt").exists():
                 continue
             pred = predict.cnn_predictions(run_id, SPLIT, verbose=False)

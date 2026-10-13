@@ -1,33 +1,30 @@
 """ESC-50 confusers, mixed into our own audio in the spectral domain.
 
-Why mixing and not substitution: a clip used on its own would carry its own recording gain,
-microphone response and room, so the label "no drone" would be predictable from provenance
-rather than from sound. Adding it on top of a real frame keeps our array's real noise floor
-under every example and lets the confuser only add energy.
+Clips are added on top of our real frames, so every example keeps our array's noise floor and
+"no drone" cannot be predicted from a clip's own recording gain or microphone.
 
-Why the spectral domain: our frames are non-overlapping 4800-sample windows with a rectangular
-window, so the STFT is linear per frame and adding spectra is exactly adding waveforms. That
-means confusers can be injected during training without re-reading 24 GB of audio.
+Our frames are non-overlapping rectangular 4800-sample windows, so adding spectra is exactly
+adding waveforms, and confusers are mixed into the cached spectra during training.
 
-Why this is safe for the per-channel detector specifically: the same clip is added to every
-channel, which is a spatial pattern no real source produces. A model reading one channel at a
-time cannot see it. Do **not** feed these mixtures to the map-based model — that is precisely
-the synthetic-geometry shortcut described in notes section 19.
+The same clip lands on every channel, a spatial pattern no real source produces. The
+per-channel detector reads one channel at a time and cannot see it; the map model sees across
+channels, so these mixtures are for the detector only.
 
-What it buys: a confuser-rejection number ("how often does a chainsaw read as a drone"), not a
-field false-alarm rate. The false-alarm floor is set by minutes of real ambient audio and no
-amount of ESC-50 lowers it.
+The result is a confuser-rejection rate (how often a chainsaw reads as a drone). The field
+false-alarm rate comes from real ambient audio (`src.demand`).
 """
+import argparse
 import csv
 import time
 from pathlib import Path
 
 import numpy as np
+import torch
 from scipy.io import wavfile
-from scipy.signal import butter, filtfilt, resample_poly
+from scipy.signal import resample_poly
 
 from .config import CACHE, CACHE_BAND, CHUNK, DATA, SR
-from .stft_cache import FILTER_BAND, FILTER_ORDER
+from .stft_cache import bandpass
 
 ESC_DIR = DATA / "esc50"
 CACHE_PATH = CACHE / "esc50" / "spectra.npz"
@@ -49,13 +46,11 @@ def build_cache(overwrite: bool = False, verbose: bool = True) -> Path:
         return CACHE_PATH
     meta_csv = ESC_DIR / "meta" / "esc50.csv"
     if not meta_csv.exists():
-        raise FileNotFoundError(f"{meta_csv} missing; run utils/download_esc50.sh first")
+        raise FileNotFoundError(f"{meta_csv} missing; run utils/setup/download_esc50.sh first")
     rows = list(csv.DictReader(meta_csv.open()))
 
     freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
     sel = (freqs >= CACHE_BAND[0]) & (freqs <= CACHE_BAND[1])
-    b, a = butter(FILTER_ORDER, [FILTER_BAND[0] / (SR / 2), FILTER_BAND[1] / (SR / 2)],
-                  btype="band")
 
     spectra, fold, category, clip_of_frame = [], [], [], []
     t0 = time.time()
@@ -70,7 +65,7 @@ def build_cache(overwrite: bool = False, verbose: bool = True) -> Path:
         n = len(x) // CHUNK
         if n == 0:
             continue
-        y = filtfilt(b, a, x)[:n * CHUNK].reshape(n, CHUNK)
+        y = bandpass(x)[:n * CHUNK].reshape(n, CHUNK)
         spectra.append(np.fft.rfft(y, axis=1)[:, sel].astype(np.complex64))
         fold += [int(row["fold"])] * n
         category += [row["category"]] * n
@@ -103,10 +98,9 @@ class Confusers:
             np.ones(len(d["fold"]), bool)
         self.spectra = d["spectra"][keep]
         self.category = d["category"][keep]
+        # Clip index per frame, so a K-frame stack can stay within one clip.
         self.clip = d["clip"][keep]
         self.snr_db = snr_db
-        # Runs of frames from one clip, so a K-frame stack can be temporally continuous.
-        self.energy = (np.abs(self.spectra) ** 2).sum(-1)
         if verbose:
             print(f"confusers: {len(self.spectra)} frames from folds "
                   f"{sorted(set(d['fold'][keep].tolist()))}, "
@@ -130,8 +124,6 @@ class Confusers:
         *positive* frame is still a positive, and mixing into both classes is what stops
         "contains an added sound" from becoming a perfect cue for the negative class.
         """
-        import torch
-
         B, K, M, F = X.shape
         lo, hi = snr_db if snr_db is not None else self.snr_db
         Xn = X.numpy() if isinstance(X, torch.Tensor) else X
@@ -154,8 +146,6 @@ class Confusers:
 
 
 if __name__ == "__main__":
-    import argparse
-
     p = argparse.ArgumentParser(description="Build the ESC-50 spectral cache.")
     p.add_argument("--overwrite", action="store_true")
     a = p.parse_args()

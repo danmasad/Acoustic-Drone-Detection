@@ -18,23 +18,24 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import N_SUBBANDS, run_dir                     # noqa: E402
+from src.config import run_dir                                 # noqa: E402
+from src.config import run_id as config_run_id                 # noqa: E402
 from src.train import train                                    # noqa: E402
 
-WIDTH = 32   # notes section 18: 2.3x faster than their 64 and it overfits less
+WIDTH = 32   # 2.3x faster than their 64 and it overfits less
 
-# One battery per question. The section numbers are docs/design_notes.md.
+# One battery per question.
 BATTERIES = {
-    # Order control: one K=1 and one K=5 at identical width and seed (section 20).
+    # Order control: one K=1 and one K=5 at identical width and seed.
     "step5a": [{"subset": "device3", "K": K} for K in (1, 5)],
     # Headline 2x3 grid, three seeds per cell; device3 seed 0 first so step 5a can be
-    # re-checked an hour in (section 21).
+    # re-checked an hour in.
     "headline": [{"subset": s, "K": K, "seed": seed}
                  for s in ("device3", "all24", "best6")
                  for K in (1, 5)
                  for seed in (0, 1, 2)],
     # Does usable phase live inside one recorder? Single-recorder and cross-recorder
-    # six-microphone subsets at K=1 (section 22).
+    # six-microphone subsets at K=1.
     "coherence": [{"subset": s, "K": 1} for s in
                   ("device1", "device4", "symmetric6", "device1_3", "quad4")],
     # Single-seed descriptive cells; cut from the bottom if the clock runs out.
@@ -42,33 +43,28 @@ BATTERIES = {
                     + [{"subset": s, "K": 5} for s in ("device1", "device4", "symmetric6")]
                     + [{"subset": s, "K": 5} for s in ("symmetric12", "device1_3")]
                     + [{"subset": "quad4", "K": 5}]),
-    # The resampled disc, judged on far-bin azimuth error (section 32).
+    # The resampled disc, judged on far-bin azimuth error.
     "polar": [{"subset": "all24", "K": 1, "seed": s, "polar": True} for s in (0, 1, 2)],
-    # Sub-band count: 16 was a reconstruction, so halve and double it (sections 16, 33).
+    # Sub-band count: 16 was a reconstruction, so halve and double it.
     "bins": [{"subset": "device3", "K": 1, "subbands": b} for b in (8, 32)],
-    # K=9, run only because check_history_depth said accuracy was still climbing (section 34).
+    # K=9, run only because check_history_depth said accuracy was still climbing.
     "k9": [{"subset": "device3", "K": 9, "seed": s} for s in (0, 1, 2)],
-    # Layout x loss 2x2 at all24 K=1; rect+wce and resampled+wce already exist (section 36).
+    # Layout x loss 2x2 at all24 K=1; rect+wce and resampled+wce already exist.
     "tversky": [{"subset": "all24", "K": 1, "seed": s, "loss": "tversky"} for s in (0, 1, 2)],
     "polarnative": [{"subset": "all24", "K": 1, "seed": s, "polar": True, "disc": "native"}
                     for s in (0, 1, 2)],
     "polarnative_tversky": [{"subset": "all24", "K": 1, "seed": s, "polar": True,
                              "disc": "native", "loss": "tversky"} for s in (0, 1, 2)],
-    # Completes the K=9 row so six-vs-twenty-four is compared at equal depth (section 37).
+    # Completes the K=9 row so six-vs-twenty-four is compared at equal depth.
     "all24k9": [{"subset": "all24", "K": 9, "seed": s} for s in (0, 1, 2)],
-    # Native disc and nine frames together, on the array where depth pays (section 42).
+    # Native disc and nine frames together, on the array where depth pays.
     "polarnative_k9": [{"subset": "device3", "K": 9, "seed": s, "polar": True, "disc": "native"}
                        for s in (0, 1, 2)],
 }
 
 
 def run_id(cfg: dict) -> str:
-    polar = ""
-    if cfg.get("polar"):
-        polar = "_polarn" if cfg.get("disc", "resample") == "native" else "_polar"
-    return (f"{cfg['subset']}_K{cfg['K']}_w{cfg.get('base', WIDTH)}"
-            f"_b{cfg.get('subbands', N_SUBBANDS)}_{cfg.get('loss', 'wce')}"
-            + polar + f"_s{cfg.get('seed', 0)}")
+    return config_run_id(base=WIDTH, **cfg)
 
 
 def too_late() -> bool:

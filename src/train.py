@@ -1,8 +1,8 @@
 """Train one configuration and write its metrics.
 
-Protocol, identical for every condition because that identity is what makes rows
-comparable: model selection on test 2, test 1 sealed, early stopping on test-2 AUPRC with
-patience 10 and a hard cap, best checkpoint restored rather than last.
+Same protocol for every condition, so rows are comparable: model selection on test 2, test 1
+sealed, early stopping on the test-2 hit rate within 10 degrees (patience 10, at least 15
+epochs, at most 60), and the best checkpoint restored rather than the last.
 """
 import argparse
 import json
@@ -15,14 +15,14 @@ import torch
 from . import beamform, metrics
 from . import polar as polar_grid
 from .config import MIC_SUBSETS, MODEL_BAND, N_SUBBANDS, run_dir
+from .config import run_id as make_run_id
 from .data import SplitData, input_stats, to_maps
 from .models import Loss, UNet, decode_mask
 
 EARLY = {"patience": 10, "min_delta": 0.001, "min_epochs": 15, "max_epochs": 60}
 
-# Hit rate at the dataset's 10 degree tolerance, not AUPRC: the split is 81% positive so
+# Hit rate at the dataset's 10 degree tolerance, not AUPRC: the split is 78% positive so
 # AUPRC barely moves, and the claim is about direction. Same monitor for every condition.
-# docs/design_notes.md section 29.
 MONITOR = "hit_10deg"
 
 
@@ -51,7 +51,7 @@ def beamformer_factory(data: SplitData, subbands: int, device, dirs=None, grid_s
 
 # Test-time interventions on the frame stack, same trained weights. `freeze` repeats the
 # current frame K times (no history), `shuffle` keeps history but drops order, `reverse`
-# flips time. docs/design_notes.md section 13.
+# flips time.
 ORDERS = ("causal", "freeze", "shuffle", "reverse")
 
 
@@ -65,7 +65,7 @@ def reorder(X: torch.Tensor, order: str, rng) -> torch.Tensor:
     """(B, K, M, F) -> the same frames under a test-time intervention on the K axis.
 
     `freeze{j}` keeps the last j frames real and fills the earlier slots with the oldest kept
-    frame, so j=1 is `freeze` and j=K is `causal`. Section 26 of the notes.
+    frame, so j=1 is `freeze` and j=K is `causal`.
     """
     K = X.shape[1]
     if order == "causal" or K == 1:
@@ -83,6 +83,11 @@ def reorder(X: torch.Tensor, order: str, rng) -> torch.Tensor:
 @torch.no_grad()
 def evaluate(model, data: SplitData, bfs, stats, loss_fn, batch: int = 64,
              order: str = "causal", seed: int = 0, proj=None) -> dict:
+    """One pass over a split: loss, presence scores and predicted directions, summarized.
+
+    `order` applies a test-time intervention to every stack (see `reorder`); `seed` fixes the
+    `shuffle` permutation so the control is repeatable.
+    """
     model.eval()
     rng = np.random.default_rng(seed)
     cols = {k: [] for k in ("score", "el_idx", "az_idx", "has_drone", "az", "el", "range_m",
@@ -95,10 +100,10 @@ def evaluate(model, data: SplitData, bfs, stats, loss_fn, batch: int = 64,
         mask_logits, presence = model(x)
         total, _, _ = loss_fn(mask_logits, presence, mask, present)
         losses.append(float(total.detach()))
+        # Rectangle: the brightest cell's row and column are the predicted elevation and azimuth.
         k = mask_logits.flatten(1).argmax(1)
-        # Logits, not sigmoid. Every metric here only needs the ranking, and float32 sigmoid
-        # saturates to exactly 1.0 above a logit of about 17: the K=5 probe reported AUROC
-        # 0.5000 purely because confident scores had collapsed into one tied value.
+        # Logits, not sigmoid: metrics only need the ranking, and float32 sigmoid rounds every
+        # logit above about 17 to exactly 1.0, which ties confident scores.
         cols["score"].append(presence.cpu().numpy())
         n_cols = mask_logits.shape[-1]
         cols["el_idx"].append((k // n_cols).cpu().numpy())
@@ -132,16 +137,18 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
           patience: int = EARLY["patience"], min_epochs: int = EARLY["min_epochs"],
           device: str = "auto", tag: str = "", polar: bool = False,
           disc: str = "resample", verbose: bool = True) -> dict:
+    """Train one configuration on `train`, select on `test_2`, and save the run.
+
+    Writes config.json before the first epoch, then best.pt and metrics.json at the end, all
+    under `config.run_dir(run_id)`. Returns the contents of metrics.json.
+    """
     torch.manual_seed(seed)
     np.random.seed(seed)
     rng = np.random.default_rng(seed)
     if disc not in ("resample", "native"):
         raise ValueError(f"disc must be 'resample' or 'native', not {disc!r}")
-    # `_polarn` rather than `_polar_native`, and only when it differs: the resampled runs are
-    # already on disk under `_polar` and must keep their ids so nothing re-trains.
-    suffix = "" if not polar else ("_polarn" if disc == "native" else "_polar")
-    run_id = (f"{subset}_K{K}_w{base}_b{subbands}_{loss}" + suffix
-              + f"_s{seed}" + (f"_{tag}" if tag else ""))
+    run_id = make_run_id(subset, K, base=base, subbands=subbands, loss=loss, polar=polar,
+                         disc=disc, seed=seed, tag=tag)
     out = run_dir(run_id)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -160,16 +167,21 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     bfs_train = beamformer_factory(train_data, subbands, dev, **steer)
     bfs_val = beamformer_factory(val_data, subbands, dev, **steer)
 
+    # Normalization and class weights come from the training split only, so nothing about
+    # test 2 leaks into the inputs or the loss.
     stats = input_stats(train_data, bfs_train, seed=seed,
                         valid=proj.valid if native else None)
     pos_rate = train_data.mask_positive_rate()
     drone_rate = train_data.positive_rate
     # No circular padding on the disc: its horizontal axis is an image coordinate, not an angle.
     model = UNet(K * subbands, base=base, depth=depth, wrap=not polar).to(dev)
+    # Each class pulls equally: a positive cell weighs 1 / positive rate (capped at 100), and a
+    # drone frame weighs negatives / positives.
     loss_fn = Loss(loss, pos_weight=min(1.0 / max(pos_rate, 1e-6), 100.0),
                    presence_pos_weight=(1 - drone_rate) / max(drone_rate, 1e-6)).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
+    # Everything `predict` needs to rebuild this model and its inputs, input stats included.
     cfg = {"run_id": run_id, "git": git_sha(), "subset": subset, "channels": channels,
            "K": K, "subbands": subbands, "seed": seed, "lr": lr, "loss": loss,
            "polar": polar, "polar_mode": (disc if polar else None),
@@ -192,6 +204,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     for epoch in range(max_epochs):
         model.train()
         t0, tot, n = time.time(), 0.0, 0
+        # Maps are beamformed fresh for every batch from the cached spectra, with the steering
+        # tensor of that batch's session.
         for s, X, mask, present, _ in train_data.batches(batch, rng=rng):
             bf = bfs_train(s)
             x = to_maps(bf, X.to(bf.device), *stats, projection=proj)
@@ -213,6 +227,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
                   f"(logit sd {m['presence_logit_std']:.2f})  "
                   f"median {m['median_angular_deg']:.1f} deg  "
                   f"<10d {m['hit_10deg'] * 100:.0f}%")
+        # A new best must gain more than min_delta; stop after `patience` epochs without one,
+        # never before `min_epochs`. The best weights are kept on the CPU.
         if m[MONITOR] > best + EARLY["min_delta"]:
             best, best_epoch = m[MONITOR], epoch
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -227,6 +243,8 @@ def train(subset: str = "device3", K: int = 1, subbands: int = N_SUBBANDS,
     final = evaluate(model, val_data, bfs_val, stats, loss_fn, proj=proj)
     result = {"config": cfg, "best_epoch": best_epoch, "epochs_run": len(history),
               "test_2": final, "history": history}
+    # Same weights with the history frozen, shuffled and reversed: if accuracy holds, the
+    # model is not using the past frames.
     if K > 1:
         result["order_control"] = {o: evaluate(model, val_data, bfs_val, stats, loss_fn,
                                                order=o, seed=seed, proj=proj)

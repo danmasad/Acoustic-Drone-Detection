@@ -1,6 +1,6 @@
 """Where the direction errors are, and what shape they have: range, elevation, and sign.
 
-The notes report direction error as a mean or median per range bin. Two questions those numbers
+The headline tables report direction error as a mean or median per range bin. Two questions those numbers
 cannot answer, and both change what should be fixed:
 
 1. **Is the far-field error random or systematic?** A model that is lost scatters its answers

@@ -7,7 +7,7 @@ import itertools
 
 import numpy as np
 
-from .config import AZ, C, EL, GRID_SHAPE
+from .config import AZ, C, EL
 
 
 def mic_positions(align: dict) -> np.ndarray:
@@ -50,22 +50,17 @@ def directions(az_deg=AZ, el_deg=EL) -> np.ndarray:
 
 
 def steering(pos: np.ndarray, freqs: np.ndarray, dirs: np.ndarray | None = None) -> np.ndarray:
-    """(F, D, M) complex64 phase ramps.
+    """(F, D, M) phase shifts that line up a sound from each direction.
 
-    A delay is a frequency-dependent phase rotation, which is why the map has to be formed
-    per frequency bin. Working in the frequency domain also gives fractional delays for
-    free, so this is more accurate than the integer sample shifts create_dataset.py uses.
+    A source in direction d reaches a microphone at p earlier by tau = (d . p) / c.
+    In the frequency domain that delay is the phase exp(-2*pi*i*f*tau), so applying it
+    makes all microphones add in step for that direction. Exact for any delay, not
+    rounded to whole samples.
     """
     if dirs is None:
         dirs = directions()
     tau = dirs @ pos.T / C                                       # (D, M)
     return np.exp(-2j * np.pi * freqs[:, None, None] * tau[None]).astype(np.complex64)
-
-
-def energy_map(X: np.ndarray, W: np.ndarray) -> np.ndarray:
-    """Delay-and-sum energy for one frame. X is (F, M), W is (F, D, M) -> (F,) + GRID_SHAPE."""
-    Y = np.einsum("fdm,fm->fd", W, X, optimize=True)
-    return (np.abs(Y) ** 2).reshape((-1,) + GRID_SHAPE)
 
 
 def angular_distance(az1, el1, az2, el2) -> np.ndarray:
