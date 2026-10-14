@@ -42,7 +42,7 @@ HEADLINE = [
     ("Device 3, 9 frames", 73.2, 1.4, GREEN),
     ("Searched 6, 1 frame", 52.1, 0.8, AMBER),
 ]
-# Notes 41. Same device-3 K=9 weights; only the depth of real history changes.
+# Same device-3 K=9 weights; only the depth of real history changes.
 HISTORY_GAIN = [0.5, 4.4, 8.7, 21.8, 3.0]
 HISTORY_BINS = ["0–30 m", "30–60", "60–90", "90–120", "120–180"]
 
@@ -360,7 +360,7 @@ def s04_model(prs):
         ("History", "K past frames stacked as channels. K is 1, 5, or 9."),
         ("Detection, two ways", "A presence score on the U-Net. And an 86k network on one microphone, with no array."),
         ("More quiet audio", "Pre-takeoff from these flights, 4.8 to 8.2 minutes. Other recordings mixed in. 18 soundscapes as a test only."),
-        ("A filter", "After the direction. A jump the aircraft cannot make. Not trained."),
+        ("A filter", "After the direction. Anything past 10° waits half a second. Not trained."),
     ]
     for i, (title, body) in enumerate(added):
         x = 0.55 + i * 3.2
@@ -370,7 +370,7 @@ def s04_model(prs):
     notes(s, """
 The goal is already on the problem slide. This one is the basis, then what we added.
 Where we started is the paper. Delay-and-sum builds the map. Their U-Net paints a mask on it, and the direction is read off that mask. The baseline is the brightest cell of the map with no learning, so a gain over it is the network. Their detection number was whether that direction sat still. We did not start from a detector.
-The bottom row is what we added. History is K frames as channels. Detection is two models: the presence branch at the bottom of the U-Net, and the 86k network on one microphone so the test does not depend on the array. More quiet audio is three tries: pre-takeoff from these flights, 4.8 to 8.2 minutes and one scene to three; other recordings mixed in as not-a-drone, which raised the average a little and left the different-day fold at chance; DEMAND, 18 soundscapes, as a test only. At a usable threshold the detector still fires on most of them, about 22,000 false alarms an hour, in the lab notes. The filter runs after the direction and is not trained.
+The bottom row is what we added. History is K frames as channels. Detection is two models: the presence branch at the bottom of the U-Net, and the 86k network on one microphone so the test does not depend on the array. More quiet audio is three tries: pre-takeoff from these flights, 4.8 to 8.2 minutes and one scene to three; other recordings mixed in as not-a-drone, which raised the average a little and left the different-day fold at chance; DEMAND, 18 soundscapes, as a test only. At a usable threshold the detector still fires on most of them, about 22,000 false alarms an hour. The filter runs after the direction and is not trained. A step inside 10° of the last direction is taken at once. A larger jump waits half a second.
 Azimuth uses circular padding. The grid uses 32 filters.
 """)
 
@@ -573,26 +573,26 @@ This p is one paired comparison: the same trained weights, the same frames, once
 
 
 def s11_filter(prs):
-    s = base(prs, 11, "After the network", "A jump the aircraft cannot make")
+    s = base(prs, 11, "After the network", "Inside 10°, we follow at once")
     picture(s, DOCS / "filter_sky.gif", 0.35, 1.42, w=6.4)
     text(s, 0.4, 5.85, 6.3, 1.05,
-         "Eight seconds, about 56 m out. Orange is the network on a sidelobe. Green is the filter, held inside 10° of GPS.",
+         "Eight seconds, about 45 m out. Orange is the network on a sidelobe. Green is the filter, inside 10° of GPS.",
          size=14, color=BODY, line=1.05)
     card(s, 6.95, 1.42, 5.85, 5.35)
     text(s, 7.18, 1.58, 5.45, 0.32, "The rule", size=16, color=INK, bold=True)
     text(s, 7.18, 2.0, 5.45, 1.7,
-         "Sport mode is 21 m/s, so 2.1 m in one frame. The cap is that distance as a sky angle at the GPS range, plus one 4° cell. Inside it, the direction updates at once. Outside it, only after 0.5 s of agreement.",
+         "A new direction within 10° of the last one is taken at once. A larger jump is taken only after half a second of agreement.",
          size=15, color=BODY, line=1.08)
     text(s, 7.18, 3.85, 5.45, 0.32, "What it changes", size=16, color=INK, bold=True)
     bullets(s, 7.18, 4.28, 5.4, 2.2, [
-        "One frame, matched site. 24 microphones go from 70% to 76%. Device 3 goes from 69% to 75%.",
+        "One frame, matched site. 24 microphones go from 70% to 75%. Device 3 goes from 69% to 73%.",
         "Inside 30 m the cells do not move. The gain is farther out.",
         "At nine frames, device 3 stays at 73%. The stack had already learned the smoothness.",
     ], size=14, after=6)
     notes(s, """
-The clip is eight seconds of the matched-site flight, device 3, one frame, about 56 m out. Orange is the network hopping to a sidelobe. Green is the same directions after the filter, held inside the 10° disc around GPS. Nothing was retrained. The filter runs on the decoded direction.
-The cap in these numbers uses the GPS range, which the network does not estimate. Far away the allowed jump shrinks to about 5°, and that is where most of the far-bin gain comes from.
-We also checked a fixed 16° cap, the same rule with range held at 10 m. On 24 microphones, one frame: 70.5% raw, 75.7% with the GPS range, 73.7% at 16°. The far bin is 27%, 55%, and 28%. Until we settle which cap we defend, we present the filter as the report does. If asked, the version that does not need GPS is the fixed angle, and it does not produce the far-bin jump.
+The clip is eight seconds of the matched-site flight, device 3, one frame, about 45 m out. White is GPS. Orange is the network hopping to a sidelobe. Green is the filter, and it stays inside the 10° disc. A step inside 10° of the last direction is taken at once. A larger jump waits half a second. Nothing was retrained.
+On one frame the matched site goes from 70% to 75% with 24 microphones, and from 69% to 73% with device 3. Inside 30 m nothing moves. At nine frames device 3 stays at 73%.
+On the new site, second look, 24 microphones go from 52% to 59% and device 3 from 54% to 58%. Device 3 at nine frames stays at 52%. The farthest bin on device 3 at one frame is 25% ± 4 to 57% ± 33, so that cell is not a number we defend.
 Where the raw track is stably wrong, the filter holds the error. It is not a repair for a bad array. A hard hold with no second chance wrecks the score, because some jumps are the model correcting itself.
 """)
 
@@ -600,7 +600,7 @@ Where the raw track is stably wrong, the filter holds the error. It is not a rep
 def s12_paper(prs):
     s = base(prs, 12, "Against the paper", "Their mean error, on the frames they keep")
     text(s, 0.55, 1.42, 12.2, 0.55,
-         "Matched site. Their bins. U-Net rows are frames whose last three directions already agree within 10°. Delay-and-sum is every frame. Our U-Net cells are the range over three seeds.",
+         "Matched site. Their bins. U-Net rows are frames whose last three directions already agree within 10°. Delay-and-sum is every frame. Our U-Net cells are the mean of three seeds.",
          size=15, color=BODY)
     table(s, 0.55, 2.15, [4.6, 2.0, 2.0, 2.3],
           ["Mean angular error", "0–50 m", "50–100 m", "100–200 m"],
@@ -608,12 +608,12 @@ def s12_paper(prs):
               ["Paper, delay-and-sum", "38°", "75°", "33°"],
               ["Ours, delay-and-sum, 24", "40°", "72°", "31°"],
               ["Paper, U-Net", "10°", "13°", "14°"],
-              ["Ours, U-Net, 24 mics", "7–10°", "9–12°", "31–74°"],
+              ["Ours, U-Net, 24 mics", "9°", "11°", "46°"],
           ], size=16, rh=0.58)
     card(s, 0.55, 5.15, 12.2, 1.7)
     text(s, 0.8, 5.32, 11.75, 1.35, [
         [("Under 100 m we match them, ", {"bold": True, "color": INK}),
-         ("and we are slightly ahead on the frames they keep. Past 100 m their 14° is still ahead of our 31–74°. The filter is a different cut, and it does not close that gap.", {})],
+         ("and we are slightly ahead on the frames they keep. Past 100 m their 14° is still ahead of our 46°. The filter is a different cut, and it does not close that gap.", {})],
         [("The new site is a second look at one short flight. ", {"bold": True, "color": INK}),
          ("They lead under 50 m. From 50 m out, device 3 at one frame is 12° and 11° against their 24° and 54°, on 238 frames past 100 m.", {})],
     ], size=15, color=BODY, after=4)
@@ -647,9 +647,9 @@ def s13_detection(prs):
 The two detectors, the pre-takeoff audio, the mixed-in recordings, and the 18 test soundscapes are named on the method slide. Here is what they scored.
 The 0.49 is the 86k one-microphone network, held out one whole scene at a time. It is chance. The 0.66 beside it is that same network inside one scene, tied with the U-Net's presence head. The 0.64 is that same detector on the sealed site, and only after averaging all 24 microphones. One microphone there is 0.53. The quiet audio is one minute of one scene, so 0.64 is the within-scene result again. We did not find a winner.
 This is the negative result, and it is a data fact. The architecture is not the excuse.
-Why we did not replace 0.49 with a precision-recall curve. Drone frames are about 78% of the matched site, so they are the majority, not the rare class. A detector that says "drone" on almost every frame has precision near 0.8, and a PR curve would read that prior as skill. At the threshold that keeps 95% of drones, the map models fire on 84–96% of empty frames and precision is 0.78–0.80 (notes 43). AUROC asks the question that does not hide this: does a random drone frame outscore a random quiet frame? Across scenes, no.
+Why we did not replace 0.49 with a precision-recall curve. Drone frames are about 78% of the matched site, so they are the majority, not the rare class. A detector that says "drone" on almost every frame has precision near 0.8, and a PR curve would read that prior as skill. At the threshold that keeps 95% of drones, the map models fire on 84–96% of empty frames and precision is 0.78–0.80. AUROC asks the question that does not hide this: does a random drone frame outscore a random quiet frame? Across scenes, no.
 The 0.66 from before was two halves of one afternoon.
-On DEMAND, 18 other soundscapes, we measured about 22,000 false alarms an hour. That number is in the lab notes, not the main table.
+On 18 other soundscapes the one-microphone detector fires about 22,000 times an hour at 95% recall. Training on those scenes leaves the held-out rate near 10,000 an hour.
 Past about 90 m, two thirds of labelled drone frames are quieter than typical ambient in the beamformed map. The localizer has the same wall.
 The presence probabilities are not probabilities. The head saturates. A 0.5 threshold means nothing.
 """)
@@ -659,8 +659,8 @@ def s14_close(prs):
     s = base(prs, 14, "What we would defend", "Three results, and where they stop")
     held = [
         ("Six match twenty-four", "One recorder, no shared clock, is level with the full array. On the matched site that is 69.3% against 70.5% at one frame. On the sealed site, device 3 is again not behind."),
-        ("Depth pays where mics are scarce", "Nine frames take device 3 to 73% and leave all 24 at 70%. The gain sits at 60–120 m. Order does not matter."),
-        ("The filter removes lobe hops", "On one frame it adds about 6 points, all of it past 30 m. Once nine frames are stacked it adds nothing."),
+        ("Depth pays where mics are scarce", "On the matched site, nine frames take device 3 to 73% and leave all 24 at 70%. On the sealed site they stay at 52%."),
+        ("The filter removes lobe hops", "On one frame, 24 microphones go from 70% to 75% and device 3 from 69% to 73%, past 30 m. Once nine frames are stacked it adds nothing."),
     ]
     stops = [
         ("Past about 90 m", "The labelled drone is often quieter than the background. Their stable-frame 14° is still ahead of us there."),
@@ -678,11 +678,11 @@ def s14_close(prs):
         text(s, 6.85, y, 5.9, 0.32, title, size=16, color=INK, bold=True)
         text(s, 6.85, y + 0.34, 5.9, 1.05, body, size=14, color=BODY, line=1.05)
     notes(s, """
-We close on the trade a deployment actually faces: 0.9 seconds of latency, or 18 more microphones. They do not add.
+We close on the trade a deployment actually faces: 0.9 seconds of latency, or 18 more microphones. They do not add. That trade is the matched site. On the sealed site, nine frames stay at 52%, level with one frame.
 What we would run next: ambient from more places, and a steering model that does not assume a plane wave.
 One drone, one array, two sites. We say the limit ourselves.
 The division of work stays in the report. If we are asked in the room, one sentence is enough.
-The filter's use of GPS range is still open between us. If we have decided by Thursday, this is the slide to match to that decision.
+The filter takes a step inside 10° at once. A larger jump waits half a second.
 """)
 
 
