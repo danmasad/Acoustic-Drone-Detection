@@ -1,0 +1,20 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Core numerics and the model. torch on macOS ships with the MPS backend built in;
+# note that MPS is unavailable inside a sandboxed shell, so training must run unsandboxed.
+numpy==2.5.2
+torch==2.13.0
+
+# Bandpass filtering (scipy), GPS log parsing (pandas), and the WGS84 -> UTM 56S
+# projection the dataset's own scripts use to place the drone relative to the array.
+scipy==1.18.0
+pandas==3.0.5
+pyproj==3.7.2
+
+# Figures and progress reporting for the long cache and grid runs.
+matplotlib==3.11.1
+tqdm==4.70.0
+
+# Dataset download: the host serves browsers but rejects plain curl/urllib, so the
+# downloader impersonates Chrome.
+curl_cffi==0.16.3

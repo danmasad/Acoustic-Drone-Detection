@@ -1,0 +1,103 @@
+{
+  "baseline_run": "detector_K1_w32_s0_full",
+  "baseline_auroc": 0.6623886894382364,
+  "baseline_pooled_per_hour": 24880.666666666668,
+  "ambient_frac": 0.3,
+  "epochs": 12,
+  "seed": 0,
+  "gate_per_hour": 5000.0,
+  "gate_auroc_drop": 0.02,
+  "median_held_out_per_hour": 10384.0,
+  "median_trained_on_per_hour": 5529.6,
+  "reduction_trained_on": 4.499541859567901,
+  "reduction_held_out": 2.3960580380071907,
+  "worst_auroc_drop": 0.029775802700674037,
+  "gate_passed": false,
+  "verdict": "Partial, and the shape of it is the finding: hearing real ambient cuts the rate 4.5x on the groups it heard but only 2.4x on the group it did not, and the held-out rate stays above the bar. It learns specific soundscapes rather than what a drone is not, which is the same across-site failure leave-one-scene-out found.",
+  "folds": [
+    {
+      "held_out": "domestic",
+      "run_id": "detector_K1_w32_amb_s0_full_nodomestic",
+      "auroc": 0.6326128867375623,
+      "auroc_last_epoch": 0.612900782076299,
+      "held_out_per_hour": 14752.0,
+      "held_out_scenes": {
+        "DKITCHEN": 35052.0,
+        "DLIVING": 3456.0,
+        "DWASHING": 5748.0
+      },
+      "trained_on_per_hour": 4483.2,
+      "pooled_per_hour": 6194.666666666667
+    },
+    {
+      "held_out": "nature",
+      "run_id": "detector_K1_w32_amb_s0_full_nonature",
+      "auroc": 0.6532335356175354,
+      "auroc_last_epoch": 0.5951460614497208,
+      "held_out_per_hour": 19076.0,
+      "held_out_scenes": {
+        "NFIELD": 6780.0,
+        "NPARK": 22236.0,
+        "NRIVER": 28212.0
+      },
+      "trained_on_per_hour": 1734.4,
+      "pooled_per_hour": 4624.666666666667
+    },
+    {
+      "held_out": "office",
+      "run_id": "detector_K1_w32_amb_s0_full_nooffice",
+      "auroc": 0.661741570076467,
+      "auroc_last_epoch": 0.6344320687671244,
+      "held_out_per_hour": 15508.0,
+      "held_out_scenes": {
+        "OHALLWAY": 19284.0,
+        "OMEETING": 504.0,
+        "OOFFICE": 26736.0
+      },
+      "trained_on_per_hour": 7148.8,
+      "pooled_per_hour": 8542.0
+    },
+    {
+      "held_out": "public",
+      "run_id": "detector_K1_w32_amb_s0_full_nopublic",
+      "auroc": 0.6615466043081939,
+      "auroc_last_epoch": 0.6527593494591105,
+      "held_out_per_hour": 6016.0,
+      "held_out_scenes": {
+        "PCAFETER": 1644.0,
+        "PRESTO": 13512.0,
+        "PSTATION": 2892.0
+      },
+      "trained_on_per_hour": 6576.0,
+      "pooled_per_hour": 6482.666666666667
+    },
+    {
+      "held_out": "street",
+      "run_id": "detector_K1_w32_amb_s0_full_nostreet",
+      "auroc": 0.6651924953295448,
+      "auroc_last_epoch": 0.6380967024228943,
+      "held_out_per_hour": 3368.0,
+      "held_out_scenes": {
+        "SCAFE": 588.0,
+        "SPSQUARE": 840.0,
+        "STRAFFIC": 8676.0
+      },
+      "trained_on_per_hour": 3422.4,
+      "pooled_per_hour": 3413.3333333333335
+    },
+    {
+      "held_out": "transport",
+      "run_id": "detector_K1_w32_amb_s0_full_notransport",
+      "auroc": 0.6744238409500043,
+      "auroc_last_epoch": 0.650808383281291,
+      "held_out_per_hour": 800.0,
+      "held_out_scenes": {
+        "TBUS": 2052.0,
+        "TCAR": 0.0,
+        "TMETRO": 348.0
+      },
+      "trained_on_per_hour": 7468.8,
+      "pooled_per_hour": 6357.333333333333
+    }
+  ]
+}

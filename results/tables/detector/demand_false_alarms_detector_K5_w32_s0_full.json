@@ -1,0 +1,250 @@
+{
+  "run_id": "detector_K5_w32_s0_full",
+  "threshold": 2.8696279525756836,
+  "level_matched": true,
+  "reference_energy": 5.7088705298432e+16,
+  "scenes": {
+    "DKITCHEN": {
+      "group": "domestic",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2731,
+      "per_hour": 32815.75433911882,
+      "fire_rate": 0.9115487316421896,
+      "median_logit": 4.065762519836426,
+      "gain_db": 71.61310465799947
+    },
+    "DLIVING": {
+      "group": "domestic",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2394,
+      "per_hour": 28766.355140186915,
+      "fire_rate": 0.7990654205607477,
+      "median_logit": 4.1013641357421875,
+      "gain_db": 72.03948083122734
+    },
+    "DWASHING": {
+      "group": "domestic",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 1801,
+      "per_hour": 21640.854472630173,
+      "fire_rate": 0.6011348464619493,
+      "median_logit": 3.1497156620025635,
+      "gain_db": 75.44093080129552
+    },
+    "NFIELD": {
+      "group": "nature",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2109,
+      "per_hour": 25341.789052069424,
+      "fire_rate": 0.7039385847797063,
+      "median_logit": 3.2444839477539062,
+      "gain_db": 77.35047217505837
+    },
+    "NPARK": {
+      "group": "nature",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2657,
+      "per_hour": 31926.56875834446,
+      "fire_rate": 0.886849132176235,
+      "median_logit": 3.9022486209869385,
+      "gain_db": 75.11923220659547
+    },
+    "NRIVER": {
+      "group": "nature",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2121,
+      "per_hour": 25485.981308411214,
+      "fire_rate": 0.7079439252336449,
+      "median_logit": 3.1946136951446533,
+      "gain_db": 64.78002791834518
+    },
+    "OHALLWAY": {
+      "group": "office",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2605,
+      "per_hour": 31301.73564753004,
+      "fire_rate": 0.8694926568758344,
+      "median_logit": 3.9947898387908936,
+      "gain_db": 79.8287222783222
+    },
+    "OMEETING": {
+      "group": "office",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2556,
+      "per_hour": 30712.95060080107,
+      "fire_rate": 0.8531375166889186,
+      "median_logit": 4.023177146911621,
+      "gain_db": 71.03355049117009
+    },
+    "OOFFICE": {
+      "group": "office",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2889,
+      "per_hour": 34714.28571428571,
+      "fire_rate": 0.9642857142857143,
+      "median_logit": 4.377398490905762,
+      "gain_db": 79.11396011878134
+    },
+    "PCAFETER": {
+      "group": "public",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2687,
+      "per_hour": 32287.04939919893,
+      "fire_rate": 0.8968624833110814,
+      "median_logit": 3.9230239391326904,
+      "gain_db": 57.05938061590726
+    },
+    "PRESTO": {
+      "group": "public",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2722,
+      "per_hour": 32707.610146862484,
+      "fire_rate": 0.9085447263017357,
+      "median_logit": 4.084386825561523,
+      "gain_db": 53.741603732054685
+    },
+    "PSTATION": {
+      "group": "public",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2603,
+      "per_hour": 31277.703604806407,
+      "fire_rate": 0.8688251001335113,
+      "median_logit": 3.559993028640747,
+      "gain_db": 50.219031557125064
+    },
+    "SCAFE": {
+      "group": "street",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2613,
+      "per_hour": 31397.863818424565,
+      "fire_rate": 0.8721628838451269,
+      "median_logit": 3.77072811126709,
+      "gain_db": 55.93266306699806
+    },
+    "SPSQUARE": {
+      "group": "street",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2557,
+      "per_hour": 30724.966622162883,
+      "fire_rate": 0.8534712950600801,
+      "median_logit": 3.7273802757263184,
+      "gain_db": 61.91783319472292
+    },
+    "STRAFFIC": {
+      "group": "street",
+      "outdoor": true,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2620,
+      "per_hour": 31481.975967957274,
+      "fire_rate": 0.8744993324432577,
+      "median_logit": 3.7386393547058105,
+      "gain_db": 55.1767147454267
+    },
+    "TBUS": {
+      "group": "transport",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2500,
+      "per_hour": 30040.053404539383,
+      "fire_rate": 0.8344459279038718,
+      "median_logit": 3.880289316177368,
+      "gain_db": 56.76483602887594
+    },
+    "TCAR": {
+      "group": "transport",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2293,
+      "per_hour": 27552.736982643524,
+      "fire_rate": 0.7653538050734312,
+      "median_logit": 3.2556934356689453,
+      "gain_db": 59.809934367886115
+    },
+    "TMETRO": {
+      "group": "transport",
+      "outdoor": false,
+      "frames": 2996,
+      "hours": 0.08322222222222223,
+      "alarms": 2690,
+      "per_hour": 32323.09746328438,
+      "fire_rate": 0.8978638184245661,
+      "median_logit": 4.142302513122559,
+      "gain_db": 46.85042189928815
+    }
+  },
+  "recall_sweep": [
+    {
+      "recall": 0.95,
+      "threshold": 2.8696279525756836,
+      "ours_fire_rate": 0.9037544696066746,
+      "ours_per_hour": 32535.160905840283,
+      "demand_fire_rate": 0.8371903278445334,
+      "demand_per_hour": 30138.8518024032
+    },
+    {
+      "recall": 0.9,
+      "threshold": 3.172912836074829,
+      "ours_fire_rate": 0.7783075089392133,
+      "ours_per_hour": 28019.070321811676,
+      "demand_fire_rate": 0.7411363299213767,
+      "demand_per_hour": 26680.90787716956
+    },
+    {
+      "recall": 0.75,
+      "threshold": 3.648818016052246,
+      "ours_fire_rate": 0.3951132300357569,
+      "ours_per_hour": 14224.076281287247,
+      "demand_fire_rate": 0.5503263610740247,
+      "demand_per_hour": 19811.748998664887
+    },
+    {
+      "recall": 0.5,
+      "threshold": 4.059338092803955,
+      "ours_fire_rate": 0.11203814064362336,
+      "ours_per_hour": 4033.3730631704407,
+      "demand_fire_rate": 0.37201453790238836,
+      "demand_per_hour": 13392.52336448598
+    }
+  ],
+  "pooled_per_hour": 30138.851802403206,
+  "median_scene_per_hour": 31289.719626168226,
+  "iqr_scene_per_hour": [
+    29084.779706275032,
+    32196.929238985314
+  ],
+  "worst_scene": "OOFFICE",
+  "outdoor_median_per_hour": 31001.335113484645,
+  "indoor_median_per_hour": 31349.799732977302,
+  "silent_scenes": []
+}

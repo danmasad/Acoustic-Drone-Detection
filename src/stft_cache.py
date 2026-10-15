@@ -1,0 +1,187 @@
+"""The only module that opens a WAV.
+
+For every 100 ms frame of every segment, this keeps the spectrum of each microphone:
+the 4,800 samples are band-passed, FFT'd into 10 Hz bins, and only the 381 bins in
+200-4000 Hz are stored, as complex numbers so the phase between microphones survives.
+The result, cache/<segment>/stft.npy of shape (frames, 24, 381), is about 6x smaller
+than the WAVs and holds the in-band audio exactly. The frame labels are saved beside it.
+
+Everything downstream (microphone subsets, direction grids, sub-band counts, frame
+stacking) is a re-steer over this cache rather than another read of the audio. Maps are
+not cached because that would fix the subset, grid and bin count at about 3.4 GB per
+subset, while steering a batch costs about 2% of a training step.
+"""
+import argparse
+import struct
+import time
+from pathlib import Path
+
+import numpy as np
+from scipy.signal import butter, filtfilt
+
+from .config import (BYTES_PER_SAMPLE, CACHE_BAND, CH_PER_DEVICE, CHUNK, N_CHANNELS,
+                     SR, Segment, segments)
+from .labels import frame_labels
+
+# Above 200 Hz is where the drone's harmonics live, and the low end is dominated by wind.
+# The FFT band selection does most of the filtering; this removes the sub-200 Hz energy
+# first so it cannot leak up through the sidelobes of a rectangular analysis window.
+FILTER_BAND = (200.0, 8000.0)
+FILTER_ORDER = 5
+
+
+def bandpass_coeffs(band=FILTER_BAND, order=FILTER_ORDER, sr=SR):
+    """Butterworth (b, a) for the band-pass applied before every STFT in this repo."""
+    return butter(order, [band[0] / (sr / 2), band[1] / (sr / 2)], btype="band")
+
+
+def bandpass(x: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Zero-phase band-pass of `x` along `axis`, identical to the one `build_cache` applies."""
+    b, a = bandpass_coeffs()
+    return filtfilt(b, a, x, axis=axis)
+
+
+def wav_info(path: Path) -> tuple[int, int, int, int]:
+    """(data offset, channels, sample rate, bytes per sample) by walking the RIFF chunks.
+
+    The header is 44 bytes on every file in this dataset, but a WAV is allowed extra
+    chunks and a silent 4-byte misread would shift one recorder's audio relative to the
+    others, so the chunks are parsed rather than assumed.
+    """
+    with open(path, "rb") as f:
+        if f.read(4) != b"RIFF" or f.read(8)[4:] != b"WAVE":
+            raise ValueError(f"not a RIFF/WAVE file: {path}")
+        ch = sr = bits = None
+        while True:
+            head = f.read(8)
+            if len(head) < 8:
+                raise ValueError(f"no data chunk in {path}")
+            cid, size = struct.unpack("<4sI", head)
+            if cid == b"fmt ":
+                fmt = f.read(size)
+                ch, sr = struct.unpack("<H", fmt[2:4])[0], struct.unpack("<I", fmt[4:8])[0]
+                bits = struct.unpack("<H", fmt[14:16])[0]
+            elif cid == b"data":
+                return f.tell(), ch, sr, bits // 8
+            else:
+                f.seek(size + (size & 1), 1)
+
+
+class SegmentAudio:
+    """Memory-mapped 24-channel view of one segment, with per-recorder offsets applied.
+
+    Each recorder writes its own file and was started by hand, so the same instant sits at
+    a different sample in each (2-54 ms apart in this dataset). corrections_samples shifts
+    every file so sample 0 is the same instant on all 24 channels. This removes only the
+    recording offset; the physical arrival-time differences between microphones (at most
+    about 4 ms across the array) are left intact, since they are what the beamformer reads.
+    The correction is whole samples, once per session, so sub-sample error and clock drift
+    between recorders remain.
+    """
+
+    def __init__(self, seg: Segment):
+        align = seg.align
+        self.paths = [seg.session_dir / w for w in align["wavs_nosync"]]
+        skip = int(round(seg.skip_seconds * SR))
+        self.starts = [skip + c for c in align["corrections_samples"]]
+        self.maps, avail = [], []
+        for path, start in zip(self.paths, self.starts):
+            offset, ch, sr, bps = wav_info(path)
+            if (ch, sr, bps) != (CH_PER_DEVICE, SR, BYTES_PER_SAMPLE):
+                raise ValueError(f"unexpected format in {path}: {ch}ch {sr}Hz {bps}B")
+            n = (path.stat().st_size - offset) // (bps * ch)
+            self.maps.append(np.memmap(path, dtype="<i4", mode="r", offset=offset,
+                                       shape=(n, ch)))
+            avail.append(n - start)
+        self.n_samples = min(avail)
+
+    @property
+    def n_frames(self) -> int:
+        return self.n_samples // CHUNK
+
+    def read(self, first: int, count: int) -> np.ndarray:
+        """(count, 24) float64, sample-aligned across recorders."""
+        out = np.empty((count, N_CHANNELS), dtype=np.float64)
+        for d, (mm, start) in enumerate(zip(self.maps, self.starts)):
+            s = start + first
+            out[:, d * CH_PER_DEVICE:(d + 1) * CH_PER_DEVICE] = mm[s:s + count]
+        return out
+
+
+def build_cache(seg: Segment, band=CACHE_BAND, block_frames: int = 600,
+                overwrite: bool = False, verbose: bool = True) -> Path:
+    """Write cache/<segment id>/{stft.npy, meta.npz}. Returns the segment's cache dir.
+
+    Labels and audio are cut to the shorter of the two.
+    """
+    out_dir = seg.cache_dir
+    stft_path, meta_path = out_dir / "stft.npy", out_dir / "meta.npz"
+    if stft_path.exists() and meta_path.exists() and not overwrite:
+        if verbose:
+            print(f"{seg.id}: cache present, skipping")
+        return out_dir
+
+    audio = SegmentAudio(seg)
+    labels = frame_labels(seg)
+    n = min(len(labels["has_drone"]), audio.n_frames)
+    if n < len(labels["has_drone"]) and verbose:
+        print(f"{seg.id}: audio is short, {len(labels['has_drone'])} labelled frames "
+              f"-> {n} usable")
+    labels = {k: v[:n] for k, v in labels.items()}
+
+    freqs = np.fft.rfftfreq(CHUNK, 1 / SR)
+    sel = (freqs >= band[0]) & (freqs <= band[1])
+    b, a = bandpass_coeffs()
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stft = np.lib.format.open_memmap(stft_path, mode="w+", dtype=np.complex64,
+                                     shape=(n, N_CHANNELS, int(sel.sum())))
+    pad = CHUNK                      # filter context, discarded after filtering
+    t0 = time.time()
+    for f0 in range(0, n, block_frames):
+        nf = min(block_frames, n - f0)
+        lo = max(0, f0 * CHUNK - pad)
+        hi = min(audio.n_samples, (f0 + nf) * CHUNK + pad)
+        blk = filtfilt(b, a, audio.read(lo, hi - lo), axis=0)
+        head = f0 * CHUNK - lo
+        blk = blk[head:head + nf * CHUNK].reshape(nf, CHUNK, N_CHANNELS)
+        stft[f0:f0 + nf] = np.fft.rfft(blk, axis=1)[:, sel].transpose(0, 2, 1)
+        if verbose:
+            done = f0 + nf
+            print(f"\r{seg.id}: {done}/{n} frames  "
+                  f"{done / max(time.time() - t0, 1e-9):.0f} fps", end="", flush=True)
+    stft.flush()
+    if verbose:
+        print(f"\r{seg.id}: {n} frames, {stft_path.stat().st_size / 2**30:.2f} GiB, "
+              f"{time.time() - t0:.0f}s")
+
+    np.savez(meta_path, freqs=freqs[sel], n_frames=n, split=seg.split,
+             session=seg.session, flight_id=seg.flight_id, name=seg.name,
+             has_drone_segment=seg.has_drone, band=np.array(band),
+             skip_seconds=seg.skip_seconds, starts=np.array(audio.starts),
+             **labels)
+    return out_dir
+
+
+def load_cache(seg: Segment) -> tuple[np.ndarray, dict]:
+    """(n, 24, F) complex64 spectra and the meta dict, index-aligned by construction."""
+    stft = np.load(seg.cache_dir / "stft.npy", mmap_mode="r")
+    meta = dict(np.load(seg.cache_dir / "meta.npz", allow_pickle=False))
+    if len(stft) != int(meta["n_frames"]):
+        raise ValueError(f"{seg.id}: {len(stft)} frames cached, meta says {meta['n_frames']}")
+    return stft, meta
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description="Build the STFT cache for every segment.")
+    p.add_argument("--only", help="substring filter on segment id")
+    p.add_argument("--overwrite", action="store_true")
+    args = p.parse_args()
+
+    total = 0.0
+    for seg in segments():
+        if args.only and args.only not in seg.id:
+            continue
+        d = build_cache(seg, overwrite=args.overwrite)
+        total += (d / "stft.npy").stat().st_size / 2**30
+    print(f"cache total {total:.2f} GiB")

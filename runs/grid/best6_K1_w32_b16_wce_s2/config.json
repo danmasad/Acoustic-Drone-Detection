@@ -1,0 +1,39 @@
+{
+  "run_id": "best6_K1_w32_b16_wce_s2",
+  "git": "ca1aec6",
+  "subset": "best6",
+  "channels": [
+    12,
+    13,
+    14,
+    19,
+    21,
+    23
+  ],
+  "K": 1,
+  "subbands": 16,
+  "seed": 2,
+  "lr": 0.005,
+  "loss": "wce",
+  "batch": 32,
+  "base": 32,
+  "depth": 3,
+  "device": "mps",
+  "input_mean": 138.1825408935547,
+  "input_std": 5.211031436920166,
+  "mask_positive_rate": 0.013940640900338268,
+  "pos_weight": 71.73271179199219,
+  "train_drone_rate": 0.8640628892518061,
+  "presence_pos_weight": 0.15732316672801971,
+  "train_stacks": 36127,
+  "val_stacks": 15291,
+  "val_positive_rate": 0.7800013079589301,
+  "monitor": "hit_10deg",
+  "n_params": 2017826,
+  "early_stopping": {
+    "patience": 10,
+    "min_delta": 0.001,
+    "min_epochs": 15,
+    "max_epochs": 60
+  }
+}
