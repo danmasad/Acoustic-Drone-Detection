@@ -126,13 +126,9 @@ def base(prs, n, kicker, title):
     if title:
         text(s, 0.55, 0.58, 12.2, 0.7, title, size=28, color=INK, bold=True, after=0)
     if n:
-        text(s, 0.55, 7.12, 9.2, 0.24, "Hearing drones in 3D  ·  Shai Livshits & Dan Masad", size=11, color=MUTED)
+        text(s, 0.55, 7.12, 9.2, 0.24, "Acoustic Drone Detection  ·  Shai Livshits & Dan Masad", size=11, color=MUTED)
         text(s, 11.3, 7.12, 1.5, 0.24, f"{n}  /  {TOTAL}", size=11, color=MUTED, align=PP_ALIGN.RIGHT)
     return s
-
-
-def notes(slide, body):
-    slide.notes_slide.notes_text_frame.text = body.strip()
 
 
 def picture(slide, path, x, y, w=None, h=None):
@@ -142,6 +138,12 @@ def picture(slide, path, x, y, w=None, h=None):
     if h is not None:
         kw["height"] = Inches(h)
     return slide.shapes.add_picture(str(path), Inches(x), Inches(y), **kw)
+
+
+def bottom_line(slide, y, body, h=0.9):
+    card(slide, 0.55, y, 12.2, h, fill=DARK, line=None)
+    text(slide, 0.8, y + 0.16, 2.0, 0.3, "BOTTOM LINE", size=12, color="60A5FA", bold=True)
+    text(slide, 2.65, y + 0.12, 9.9, h - 0.2, body, size=16, color="F5F5F4", line=1.08, after=0)
 
 
 def stat(slide, x, y, w, h, big, label, color=INK, big_size=26):
@@ -285,65 +287,71 @@ def s01_title(prs):
     text(s, 0.7, 4.35, 5.9, 0.32, "Shai Livshits  ·  Dan Masad", size=16, color="F5F5F4")
     text(s, 0.7, 4.78, 5.9, 0.28, "12 October 2026", size=14, color="78716C")
     picture(s, FIG / "flight_hemisphere_mar18_f2.gif", 7.15, 1.7, w=5.4)
-    notes(s, """
-About fifteen minutes between us, and the last minute is the three limits.
-We say why the problem is worth a project, then we move. We do not read the slide.
-The clip is one flight on the matched site: GPS against our direction, green inside 10°, red outside.
-""")
 
 
 def s02_problem(prs):
-    s = base(prs, 2, "The problem", "A direction, ten times a second")
-    bullets(s, 0.55, 1.55, 7.3, 4.6, [
-        "A small drone often flies with no radio link. A camera loses it in poor visibility, and a radio detector has nothing to hear.",
-        "The rotors are loud, and the sound is a tonal stack. A ground array can report it.",
-        "Every tenth of a second: is a drone audible, and in which direction.",
-        "Published arrays use 24 or more synchronized microphones.",
-    ], size=18, after=14)
-    card(s, 8.15, 1.55, 4.6, 4.7, fill=DARK, line=None)
-    text(s, 8.4, 1.78, 4.15, 0.55, "The Research Question", size=16, color="60A5FA", bold=True)
-    text(s, 8.4, 2.5, 4.15, 2.0,
-         "Can a few frames of history let six microphones match twenty-four?",
-         size=20, color="F5F5F4", line=1.15)
-    text(s, 8.4, 4.7, 4.15, 1.2,
-         "Six microphones is one off-the-shelf recorder. No clock shared with a second device. About four times cheaper.",
-         size=15, color="A8A29E", line=1.12)
-    notes(s, """
-We open with the operational constraint, then our question: can a few frames of history let six microphones match twenty-four?
-Rodríguez et al., IWAENC 2026, beamform and then segment the map. They released the data and not the training code, and their own future-work sentence is temporal context. We reimplemented their system so the comparison is ours to measure.
-We hold the answer. It lands on the results.
-""")
+    s = base(prs, 2, "The problem", "A drone on a wire is silent to every sensor but one")
+    text(s, 0.55, 1.42, 12.2, 0.3,
+         "Fibre-optic FPV drones radiate nothing.", size=15, color=BODY)
+    hurdles = [
+        ("Radio", "Nothing to hear", "No link. Nothing to scan, nothing to jam."),
+        ("Radar", "Too small, too low", "Plastic, sub-metre, in the ground clutter."),
+        ("Camera", "Too late", "A few pixels. Gone at night or in fog."),
+    ]
+    x = 0.55
+    for name, line1, body in hurdles:
+        card(s, x, 1.95, 3.85, 1.9)
+        text(s, x + 0.22, 2.1, 3.4, 0.3, name.upper(), size=12, color=RED, bold=True)
+        text(s, x + 0.22, 2.42, 3.4, 0.5, line1, size=20, color=INK, bold=True, after=0)
+        text(s, x + 0.22, 3.05, 3.4, 0.7, body, size=14, color=BODY, line=1.12)
+        x += 4.0
+    card(s, 0.55, 4.2, 12.2, 2.65, fill=DARK, line=None)
+    text(s, 0.8, 4.4, 5.4, 0.3, "WHAT IT CANNOT SWITCH OFF", size=12, color="60A5FA", bold=True)
+    text(s, 0.8, 4.78, 5.4, 1.9,
+         ["Rotors are loud, tonal, and heard from every direction.",
+          "Listening is passive."],
+         size=18, color="F5F5F4", line=1.15, after=10)
+    text(s, 6.6, 4.4, 5.9, 0.3, "OUR METHOD", size=12, color="60A5FA", bold=True)
+    steps = [
+        "Microphones hear the same sound with small delays.",
+        "Beamforming turns the delays into a map of the sky.",
+        "A network marks the drone on the map, 10× a second.",
+    ]
+    tb = bullets(s, 6.6, 4.78, 5.9, 1.9, steps, size=16, dot="60A5FA", after=8)
+    for p in tb.text_frame.paragraphs:
+        for r in p.runs[1:]:                 # keep the blue dot, lighten the body text
+            r.font.color.rgb = rgb("F5F5F4")
 
 
 def s03_data(prs):
-    s = base(prs, 3, "Data", "One drone, two sites, three jobs")
-    text(s, 0.55, 1.45, 12.2, 0.4,
-         "Western Sydney University array. A DJI Air 3, four recorders of six, 48 kHz, GPS at 10 Hz. Splits are the paper's.",
-         size=16, color=BODY)
-    table(s, 0.55, 2.05, [2.0, 3.3, 2.2, 4.6],
-          ["Split", "Where", "Drone audio", "What we used it for"],
+    s = base(prs, 3, "Data", "One drone, two sites, and borrowed quiet")
+    text(s, 0.55, 1.42, 12.2, 0.3,
+         "Western Sydney University dataset. DJI Air 3, 24 microphones, 48 kHz, GPS at 10 Hz.",
+         size=15, color=BODY)
+    table(s, 0.55, 1.9, [2.0, 2.4, 2.6, 5.2],
+          ["Split", "Drone audio", "Where", "Role"],
           [
-              ["Train", "Site 1, two flights", "52 min", "Fit the weights"],
-              ["Test 2", "Site 1, later flight", "20 min", "Early stop: best hit rate"],
-              ["Test 1", "A second site", "3 min", "Sealed. Scored once"],
-          ], size=16, rh=0.55)
-    card(s, 0.55, 4.55, 12.2, 2.2)
-    text(s, 0.8, 4.75, 11.7, 0.35, "The weak part is the quiet audio", size=16, color=INK, bold=True)
-    text(s, 0.8, 5.2, 11.7, 1.3,
-         "The release labels about five minutes with no drone, one recording cut in half between train and test. "
-         "We mined the pre-takeoff audio the splits never use, checked by beamformed contrast that it is ambient, and dropped 20 seconds for motor spin-up. "
-         "Training negatives went from 4.8 to 8.2 minutes, and from one scene to three. That is still not enough to learn a detector.",
-         size=15, color=BODY, line=1.12)
-    notes(s, """
-"Early stop: best hit rate" means there is no third split. Every epoch we score test 2 by the share of drone frames within 10°, and the weights we save are that best epoch, not the last epoch and not the lowest loss. Test 2 is therefore also the flight in the main table. It is not a pure held-out test.
-Test 1 is the one we never used to choose anything. Three minutes, scored once, after the choices were fixed.
-The negatives are three scenes. That number comes back when detection fails.
-Targets are 10° discs. Row k of the GPS log is frame k. That is the whole alignment.
-""")
+              ["Train", "52 min", "Site 1", "Fit the weights"],
+              ["Test 2", "20 min", "Site 1", "Pick the epoch"],
+              ["Test 1", "3 min", "Second site", "Sealed. Scored once"],
+          ], size=16, rh=0.5)
+    text(s, 0.55, 4.0, 8, 0.26, "NO-DRONE AUDIO: 5 MINUTES IN THE RELEASE", size=12, color=BLUE, bold=True)
+    quiet = [
+        ("Pre-takeoff", "4.8 → 8.2 min", "Mined from the same recordings, before the motors spin up."),
+        ("ESC-50", "50 classes", "Short everyday sounds, mixed into our quiet frames."),
+        ("DEMAND", "18 places", "90 min of rooms, streets, vehicles. Train on five kinds, score the sixth."),
+    ]
+    x = 0.55
+    for name, big, body in quiet:
+        card(s, x, 4.38, 3.85, 2.47)
+        text(s, x + 0.22, 4.52, 3.4, 0.3, name.upper(), size=12, color=MUTED, bold=True)
+        text(s, x + 0.22, 4.84, 3.4, 0.5, big, size=22, color=INK, bold=True, after=0)
+        text(s, x + 0.22, 5.5, 3.4, 1.2, body, size=14, color=BODY, line=1.12)
+        x += 4.0
 
 
-def s04_model(prs):
-    s = base(prs, 4, "Method", "What we tried")
+def s06_model(prs):
+    s = base(prs, 6, "Method", "What we tried")
     text(s, 0.55, 1.38, 6, 0.26, "WHERE WE STARTED", size=12, color=BLUE, bold=True)
     basis = [
         ("The map", "Delay-and-sum. Each 100 ms frame becomes 23 by 91 directions, in 16 bands."),
@@ -352,27 +360,31 @@ def s04_model(prs):
     ]
     for i, (title, body) in enumerate(basis):
         x = 0.55 + i * 4.2
-        card(s, x, 1.72, 4.02, 2.05)
-        text(s, x + 0.16, 1.86, 3.7, 0.34, title, size=16, color=BLUE, bold=True)
-        text(s, x + 0.16, 2.28, 3.7, 1.3, body, size=15, color=BODY, line=1.08)
-    text(s, 0.55, 3.96, 8, 0.26, "HOW WE TRIED TO GET AN EDGE", size=12, color=INK, bold=True)
-    added = [
+        card(s, x, 1.66, 4.02, 1.5)
+        text(s, x + 0.16, 1.78, 3.7, 0.32, title, size=16, color=BLUE, bold=True)
+        text(s, x + 0.16, 2.14, 3.7, 0.95, body, size=14, color=BODY, line=1.06)
+    text(s, 0.55, 3.34, 8, 0.26, "HOW WE TRIED TO GET AN EDGE", size=12, color=INK, bold=True)
+    model_row = [
         ("History", "K past frames stacked as channels. K is 1, 5, or 9."),
-        ("Detection, two ways", "A presence score on the U-Net. And an 86k network on one microphone, with no array."),
-        ("More quiet audio", "Pre-takeoff from these flights, 4.8 to 8.2 minutes. Other recordings mixed in. 18 soundscapes as a test only."),
-        ("A filter", "After the direction. Anything past 10° waits half a second. Not trained."),
+        ("Six-mic subsets", "A greedy sidelobe search, plus simple picks. Device 3 matches all 24."),
+        ("Two losses", "The paper's Tversky against weighted cross-entropy. 63.5% vs 70.1% within 10°."),
+        ("Disc or grid", "A polar disc, zenith in the centre. 69.5% vs 70.1%, so we kept the grid."),
     ]
-    for i, (title, body) in enumerate(added):
+    for i, (title, body) in enumerate(model_row):
         x = 0.55 + i * 3.2
-        card(s, x, 4.3, 3.05, 2.55)
-        text(s, x + 0.14, 4.42, 2.76, 0.58, title, size=15, color=INK, bold=True)
-        text(s, x + 0.14, 5.05, 2.76, 1.6, body, size=14, color=BODY, line=1.06)
-    notes(s, """
-The goal is already on the problem slide. This one is the basis, then what we added.
-Where we started is the paper. Delay-and-sum builds the map. Their U-Net paints a mask on it, and the direction is read off that mask. The baseline is the brightest cell of the map with no learning, so a gain over it is the network. Their detection number was whether that direction sat still. We did not start from a detector.
-The bottom row is what we added. History is K frames as channels. Detection is two models: the presence branch at the bottom of the U-Net, and the 86k network on one microphone so the test does not depend on the array. More quiet audio is three tries: pre-takeoff from these flights, 4.8 to 8.2 minutes and one scene to three; other recordings mixed in as not-a-drone, which raised the average a little and left the different-day fold at chance; DEMAND, 18 soundscapes, as a test only. At a usable threshold the detector still fires on most of them, about 22,000 false alarms an hour. The filter runs after the direction and is not trained. A step inside 10° of the last direction is taken at once. A larger jump waits half a second.
-Azimuth uses circular padding. The grid uses 32 filters.
-""")
+        card(s, x, 3.64, 3.05, 1.5)
+        text(s, x + 0.14, 3.76, 2.76, 0.32, title, size=15, color=INK, bold=True)
+        text(s, x + 0.14, 4.12, 2.76, 0.95, body, size=13, color=BODY, line=1.05)
+    other_row = [
+        ("Detection, two ways", "A presence score on the U-Net. And an 86k network on one microphone, with no array."),
+        ("More quiet audio", "Pre-takeoff, 4.8 to 8.2 minutes. ESC-50 sounds mixed in. DEMAND places: train on five, score the sixth."),
+        ("Kinematic filter", "After the U-Net. Based on drone speed limits. Not trained."),
+    ]
+    for i, (title, body) in enumerate(other_row):
+        x = 0.55 + i * 4.2
+        card(s, x, 5.3, 4.02, 1.5)
+        text(s, x + 0.16, 5.42, 3.7, 0.32, title, size=15, color=INK, bold=True)
+        text(s, x + 0.16, 5.78, 3.7, 0.95, body, size=13, color=BODY, line=1.05)
 
 
 def save_unet(path: Path) -> None:
@@ -449,57 +461,36 @@ def save_unet(path: Path) -> None:
     plt.close(fig)
 
 
-def s05_network(prs):
-    s = base(prs, 5, "The network", "One U-Net, two answers")
+def s07_network(prs):
+    s = base(prs, 7, "The network", "One U-Net, two answers")
     picture(s, DOCS / "unet_structure.png", 0.2, 1.35, w=12.9)
-    notes(s, """
-We walk the U. Down the left, the 23 by 91 map is pooled three times, to 2 by 11. The number in each box is the channel count at 32 base filters. A skip copies the finer map across, because the direction lives in a small patch of sky.
-The green side rebuilds the full map. Nearest-neighbor resizes the coarse map to the skip's exact size, the two are concatenated, and the two convolutions mix them. Pooling does not divide the 23-row map by two, so a plain doubling would miss the skip. The mask is one score per cell, and the direction is the brightest cell. That is the result we report.
-The amber branch at the bottom is the presence head. It was supposed to say whether a drone is in the frame. Average and max of the bottleneck, then 128 units and a leaky ReLU, then one score. A plain ReLU in that layer died in one seed, which is why it is leaky. The mask does not pass through it, so localization kept training. The score itself did not generalize, which is the detection slide.
-K frames of 16 bands enter as channels. Only the first layer grows with K. The rest of the U is the same at one, five, and nine frames. About 2.0 million weights.
-""")
 
 
-def s06_hardware(prs):
-    s = base(prs, 6, "The array", "Four recorders, six microphones each")
+def s04_hardware(prs):
+    s = base(prs, 4, "The array", "Four recorders, six microphones each")
     picture(s, FIG / "array_geometry.png", 0.28, 1.38, w=8.15)
     points = [
         ("Colour is the recorder", "Purple, blue, teal, yellow. Each is one Zoom recorder, so the six share a clock."),
         ("Teal is device 3", "The six we train. 1.09 m across, the outer microphones of one recorder."),
-        ("The bottom row", "Other subsets we drew. Centre is device 3 again. The searched six is not a picture here."),
-        ("Then the map", "Next slide is one simulated source through this geometry."),
+        ("The bottom row", "Other subsets we drew. Centre is device 3 again."),
     ]
     for i, (title, body) in enumerate(points):
         y = 1.48 + i * 1.3
         text(s, 8.6, y, 4.2, 0.32, title, size=16, color=INK, bold=True)
         text(s, 8.6, y + 0.34, 4.2, 0.85, body, size=14, color=BODY, line=1.05)
-    notes(s, """
-We show the hardware before the simulated response, so the map has something to point at.
-Top left: four colours, four recorders. Teal is device 3, one recorder, 1.09 m. The figure's own label says that subset is alias-free only below about 380 Hz, and our maps run to 2.2 kHz, which is why the next slide has phantoms.
-The title on the figure says test-1 geometry. It is the same hardware. We are not scoring the sealed site on this slide.
-The bottom centre is device 3 again. The searched six spans two recorders and is not one of these panels.
-""")
 
 
-def s06_map(prs):
-    s = base(prs, 7, "The map", "A phantom can look like the source")
-    picture(s, FIG / "array_beampattern.png", 0.4, 1.45, w=8.15)
+def s05_map(prs):
+    s = base(prs, 5, "The map", "What the network sees")
+    picture(s, FIG / "array_beampattern.png", 0.4, 1.4, w=9.2)
     points = [
-        ("1.47 kHz", "Spacing is alias-free only below this. The maps run to 2.2 kHz."),
-        ("3.6 dB", "Not the number on the panels. Over 250 directions, the phantom all 24 still leave. Nearly half the true peak."),
-        ("Device 3", "One recorder. Six outer microphones, 1.09 m across. No shared clock."),
-        ("Why a network", "The brightest pixel cannot tell the phantom from the source. The mask sees the whole pattern."),
+        ("One source", "Every other bright spot is a phantom made by the array."),
+        ("Why a network", "The brightest pixel can be a phantom. The network reads the whole pattern."),
     ]
     for i, (title, body) in enumerate(points):
-        y = 1.48 + i * 1.3
-        text(s, 8.75, y, 4.05, 0.32, title, size=16, color=INK, bold=True)
-        text(s, 8.75, y + 0.34, 4.05, 0.85, body, size=14, color=BODY, line=1.05)
-    notes(s, """
-This figure is a simulation, not a recording. We place one source at the cyan cross, apply only the geometric delay at each microphone, and beamform every cell. No noise, no drone spectrum, plane-wave delays. Every bright spot besides the cross is a phantom the geometry makes.
-The dB numbers printed on the panels are that one source. All 24 shows about −4.2 dB there. The 3.6 dB callout is a different summary: over 250 directions, the 95th percentile of the strongest phantom, for all 24 and also for the best six. 3 dB down would be half the power. 3.6 dB is still nearly half, so one frame's brightest pixel cannot be trusted. That is the margin the network is asked to beat.
-Device 4, the flat ring, is a vertical stripe. It cannot tell elevation from its mirror. That is why some six-microphone sets fail.
-All 24 includes that flat recorder and a pair 0.17 m apart, so uniform delay-and-sum gives a bad microphone the same vote as a good one. That is why six can match twenty-four before any learning.
-""")
+        y = 2.2 + i * 1.9
+        text(s, 9.9, y, 2.9, 0.34, title, size=18, color=INK, bold=True)
+        text(s, 9.9, y + 0.42, 2.9, 1.3, body, size=15, color=BODY, line=1.08)
 
 
 def s08_training(prs, charts):
@@ -515,175 +506,114 @@ def s08_training(prs, charts):
     text(s, 0.55, 6.48, 12.2, 0.55,
          "Device 3, one frame. The dot is the epoch we keep. Solid is training loss, dashed is test 2. The direction stays near 70%. The loss rises because a few confident wrong pixels dominate it.",
          size=14, color=BODY)
-    notes(s, """
-The network does work. Delay-and-sum on these frames is 33% within 10°. The left plot sits near 70%, and the dot is the epoch we keep. The last epoch is 3 to 10 points worse on that score, which is why we do not keep it.
-The dashed line is the loss on test 2, and it rises. That loss is weighted cross-entropy on every pixel, and about 1.4% of pixels are the drone. A few confident mistakes on background pixels drive it up without moving the decoded direction. Generalization of the direction is the flat left plot. Generalization of detection is a different failure, on the detection slide.
-Test 2 is the selection set and the main reported flight. Test 1 was scored once, after the choices were fixed.
-The hit rate jitters by several points from epoch to epoch. A one-point gap between two trained models is inside that. The yardstick is the seed spread, ±1.2 points pooled.
-No learning-rate schedule. We froze the recipe so the rows stay comparable.
-One seed killed a ReLU in the presence head and sat at chance detection while localization trained. The head is a leaky ReLU now. The grid was restarted so every cell shares it.
-""")
 
 
-def s09_headline(prs, charts):
-    s = base(prs, 9, "Results  ·  matched site", "Six microphones match twenty-four")
-    text(s, 0.55, 1.4, 12.2, 0.55,
-         "Every drone frame, before the filter. Within 10° of the true direction. The bar is the seed spread. Pooled seed spread on this site is ±1.2 points.",
+def s10_history(prs):
+    s = base(prs, 10, "Results  ·  our benchmark", "History stands in for microphones")
+    text(s, 0.55, 1.42, 12.2, 0.3,
+         "Within 10°. Left: gain from one frame to nine. Right: device 3 at nine frames, all 24 at one.",
          size=15, color=BODY)
-    picture(s, charts["headline"], 0.45, 2.0, w=7.5)
-    card(s, 8.15, 2.15, 4.6, 4.5)
-    text(s, 8.38, 2.35, 4.2, 1.5, [
-        [("69.3%  against  70.5%", {"bold": True, "color": INK, "size": 18})],
-        "Device 3 at one frame, against all 24. Inside the seed noise.",
-    ], size=15, color=BODY, after=8)
-    text(s, 8.38, 4.15, 4.2, 2.2, [
-        [("73.2%  against  70.1%", {"bold": True, "color": GREEN, "size": 18})],
-        "At nine frames, 0.9 s, device 3 moves and all 24 stays put. Depth pays only on the small array.",
-        "The searched six, best of 106,183 subsets, scores 52%.",
-    ], size=15, color=BODY, after=8)
-    notes(s, """
-We read the chart top to bottom. Learning beats delay-and-sum by a wide margin. Then 6 matches 24 at one frame. Then nine frames helps the six and not the twenty-four. Then the searched array, which won a geometric contest, is the worst thing we trained.
-K=5 is 70.1% and 71.1%, inside the noise. The grid's first reading was a null. Nine frames is where the small array pulls ahead.
-How the six was searched: no audio and no training. Every non-coplanar subset of 6 out of 24, which is 106,183 subsets. For each, a noise-free plane wave in 250 directions. The score is the strongest response more than 15° from the true direction, at the 95th percentile. The winner ties all 24 at −3.6 dB on that score and then trains at 52%. The score correlates −0.80 with the arrays it did not select, and −0.36 once its own winner is included. We optimized a proxy and selected the error in the proxy. Device 3 was not that winner. It is one recorder, and it is the six we report.
-Three seeds cannot give a permutation p below 0.10. These gaps are point estimates. The history deletion on the next slide is the comparison we tested formally.
-""")
+    picture(s, DOCS / "analysis_history.png", 1.0, 1.9, w=11.3)
+    bottom_line(s, 5.95, "Nine frames lift device 3 to the level of all 24, mostly past 60 m. "
+                "A sidelobe flickers from frame to frame; the true peak stays put.")
 
 
-def s10_history(prs, charts):
-    s = base(prs, 10, "Results  ·  what the frames are doing", "History helps where one frame is weak")
-    text(s, 0.55, 1.4, 12.2, 0.7,
-         "Same trained weights. The past frames are replaced with a copy of the oldest one we keep, so the only change is how far back the network can see.",
-         size=16, color=BODY)
-    picture(s, charts["history"], 0.4, 2.15, w=7.6)
-    card(s, 8.2, 2.3, 4.55, 4.3)
-    text(s, 8.42, 2.5, 4.15, 0.4, "Device 3, nine frames", size=16, color=INK, bold=True)
-    bullets(s, 8.42, 3.05, 4.15, 3.3, [
-        "Same weights, past deleted: 5.1 points. p = 0.0007 is this comparison. A drop that steady is very unlikely if the past did nothing.",
-        "The gain is +0.5 inside 30 m and +21.8 at 90–120 m.",
-        "Shuffling or reversing the frames costs about 0.2. The cue is persistence, not order.",
-        "The climb ends near 0.8 s.",
-    ], size=14, after=8)
-    notes(s, """
-The mechanism: a drone sits still on the grid while a sidelobe flickers. Persistence does not need the order of the frames, and shuffling or reversing them costs about 0.2. The network agrees.
-Why K=5 looked like a null: a wider input costs accuracy before any history is used, and the history earns that cost back. Nine frames is where that term wins, and only on the small array. All 24 at nine frames is 70.1%, the same as one frame. Twenty-four microphones suppress phantoms spatially. Nine frames suppress them in time.
-Past 120 m the gain falls back. Two thirds of the labelled frames out there are quieter than typical ambient, so there is nothing to integrate.
-What the p-value is. It is not the chance that six beats twenty-four. Those models were trained separately, and three seeds cannot give a permutation p below 0.10.
-This p is one paired comparison: the same trained weights, the same frames, once with the real past and once with the past replaced by a copy of the oldest frame we keep. Neighbouring frames are one flight, not thousands of independent trials, so we resampled contiguous blocks. A per-frame test was about 3.5 times too optimistic. Holm adjustment is across the family of claims we tested. p = 0.0007 means that, under that null, a 5.1 point drop this consistent is very unlikely. It is the comparison that survives the correction.
-""")
+def s11_filter_gain(prs):
+    s = base(prs, 11, "Results  ·  our benchmark", "The filter helps most without history")
+    text(s, 0.55, 1.42, 12.2, 0.3,
+         "Points gained within 10° when the kinematic filter is applied after the network. Test 2.",
+         size=15, color=BODY)
+    picture(s, DOCS / "analysis_filter.png", 1.3, 1.85, w=10.6)
+    text(s, 0.55, 5.6, 12.2, 0.3, [
+        [("All ranges:   ", {"bold": True, "color": INK}),
+         ("24 mics, 1 frame  70 → 75%   ·   Device 3, 1 frame  69 → 73%   ·   Device 3, 9 frames  73 → 73%", {})],
+    ], size=15, color=BODY, align=PP_ALIGN.CENTER)
+    bottom_line(s, 6.05, "Highly effective at long range and when the network has no temporal context. "
+                "Nine frames and the filter use the same window, so they do not add up.", h=0.85)
 
 
-def s11_filter(prs):
-    s = base(prs, 11, "After the network", "Inside 10°, we follow at once")
+def s12_filter(prs):
+    s = base(prs, 12, "After the network", "Inside 10°, we follow at once")
     picture(s, DOCS / "filter_sky.gif", 0.35, 1.42, w=6.4)
-    text(s, 0.4, 5.85, 6.3, 1.05,
-         "Eight seconds, about 45 m out. Orange is the network on a sidelobe. Green is the filter, inside 10° of GPS.",
-         size=14, color=BODY, line=1.05)
-    card(s, 6.95, 1.42, 5.85, 5.35)
-    text(s, 7.18, 1.58, 5.45, 0.32, "The rule", size=16, color=INK, bold=True)
-    text(s, 7.18, 2.0, 5.45, 1.7,
-         "A new direction within 10° of the last one is taken at once. A larger jump is taken only after half a second of agreement.",
-         size=15, color=BODY, line=1.08)
-    text(s, 7.18, 3.85, 5.45, 0.32, "What it changes", size=16, color=INK, bold=True)
-    bullets(s, 7.18, 4.28, 5.4, 2.2, [
-        "One frame, matched site. 24 microphones go from 70% to 75%. Device 3 goes from 69% to 73%.",
-        "Inside 30 m the cells do not move. The gain is farther out.",
-        "At nine frames, device 3 stays at 73%. The stack had already learned the smoothness.",
-    ], size=14, after=6)
-    notes(s, """
-The clip is eight seconds of the matched-site flight, device 3, one frame, about 45 m out. White is GPS. Orange is the network hopping to a sidelobe. Green is the filter, and it stays inside the 10° disc. A step inside 10° of the last direction is taken at once. A larger jump waits half a second. Nothing was retrained.
-On one frame the matched site goes from 70% to 75% with 24 microphones, and from 69% to 73% with device 3. Inside 30 m nothing moves. At nine frames device 3 stays at 73%.
-On the new site, second look, 24 microphones go from 52% to 59% and device 3 from 54% to 58%. Device 3 at nine frames stays at 52%. The farthest bin on device 3 at one frame is 25% ± 4 to 57% ± 33, so that cell is not a number we defend.
-Where the raw track is stably wrong, the filter holds the error. It is not a repair for a bad array. A hard hold with no second chance wrecks the score, because some jumps are the model correcting itself.
-""")
+    card(s, 6.95, 1.42, 5.85, 3.4)
+    text(s, 7.18, 1.6, 5.45, 0.34, "The rule", size=18, color=INK, bold=True)
+    bullets(s, 7.18, 2.1, 5.45, 2.5, [
+        "A drone has a top speed, so its direction can only change so much between consecutive frames.",
+        "A new direction within 10° of the last one is taken at once. A larger jump is taken only after half a second of agreement.",
+    ], size=17, after=10)
 
 
-def s12_paper(prs):
-    s = base(prs, 12, "Against the paper", "Their mean error, on the frames they keep")
+def s09_paper(prs):
+    s = base(prs, 9, "Results  ·  the paper's benchmark", "Against the paper, on their metric")
     text(s, 0.55, 1.42, 12.2, 0.55,
-         "Matched site. Their bins. U-Net rows are frames whose last three directions already agree within 10°. Delay-and-sum is every frame. Our U-Net cells are the mean of three seeds.",
+         "Mean angular error, matched site, the paper's distance bins. U-Net rows are stable frames; "
+         "delay-and-sum rows are every frame. Our U-Net cells are the mean of three seeds.",
          size=15, color=BODY)
-    table(s, 0.55, 2.15, [4.6, 2.0, 2.0, 2.3],
-          ["Mean angular error", "0–50 m", "50–100 m", "100–200 m"],
+    table(s, 0.55, 2.1, [4.6, 1.6, 2.0, 2.0, 2.0],
+          ["", "Site", "0–50 m", "50–100 m", "100–200 m"],
           [
-              ["Paper, delay-and-sum", "38°", "75°", "33°"],
-              ["Ours, delay-and-sum, 24", "40°", "72°", "31°"],
-              ["Paper, U-Net", "10°", "13°", "14°"],
-              ["Ours, U-Net, 24 mics", "9°", "11°", "46°"],
-          ], size=16, rh=0.58)
-    card(s, 0.55, 5.15, 12.2, 1.7)
-    text(s, 0.8, 5.32, 11.75, 1.35, [
-        [("Under 100 m we match them, ", {"bold": True, "color": INK}),
-         ("and we are slightly ahead on the frames they keep. Past 100 m their 14° is still ahead of our 46°. The filter is a different cut, and it does not close that gap.", {})],
-        [("The new site is a second look at one short flight. ", {"bold": True, "color": INK}),
-         ("They lead under 50 m. From 50 m out, device 3 at one frame is 12° and 11° against their 24° and 54°, on 238 frames past 100 m.", {})],
-    ], size=15, color=BODY, after=4)
-    notes(s, """
-We lead with the delay-and-sum check. We reproduce their bars within a few degrees, including the odd dip in the far bin, and their stability rule calls 67.0% of no-drone frames detections against our 68.6%. Geometry, sync offsets, the STFT, the beamformer, the labels, and the metric all agree with an independent implementation.
-This table and the hit-rate table do not convert. A mean of 31° in the far bin can still be 2% of frames inside 10°. That is why both exist.
-The new-site rows were computed after test 1 had already been scored, on dumps that already existed. It is a second look, not a second sealed trial. 1,592 drone frames, about 2.7 minutes.
-""")
+              ["Paper, delay-and-sum", "matched", "38°", "75°", "33°"],
+              ["Ours, delay-and-sum, 24", "matched", "40°", "72°", "31°"],
+              ["Paper, U-Net, stable", "matched", "10°", "13°", "14°"],
+              ["Ours, U-Net 24, stable", "matched", "9°", "11°", "46°"],
+              ["Ours, device 3, stable", "matched", "9°", "11°", "49°"],
+          ], size=16, rh=0.5)
+    bottom_line(s, 5.2, "We reproduce their performance under 100 m, where the flight is; they lead past 100 m. "
+                "On this metric device 3 matches all 24.")
+    text(s, 0.55, 6.3, 12.2, 0.3,
+         "This slide is the paper's benchmark. The next slides score every frame on our own benchmark: the share within 10°.",
+         size=14, color=MUTED)
 
 
 def s13_detection(prs):
     s = base(prs, 13, "Detection", "It learns the recording, not the drone")
-    card(s, 0.55, 1.5, 4.3, 5.2, fill=DARK, line=None)
-    text(s, 0.8, 1.75, 3.85, 0.3, "ONE-MIC DETECTOR", size=13, color="60A5FA", bold=True)
-    text(s, 0.8, 2.2, 3.85, 1.1, "0.49", size=72, color="F5F5F4", bold=True)
-    text(s, 0.8, 3.55, 3.85, 1.35, "Cross-scene AUROC. Chance is 0.50. One scene held out at a time. ± 0.06.",
-         size=16, color="D6D3D1", line=1.12)
-    text(s, 0.8, 5.05, 3.85, 1.4,
-         "At 95% recall, precision is about 0.79. That is just how often a drone is in the frame.",
-         size=15, color="A8A29E", line=1.1)
-    points = [
-        ("Three recordings", "A scene is one visit's background noise. We have three: 25 November, and two flights on 18 March. More minutes of one field are the same example."),
-        ("The small model ties the big one", "Inside one recording, an 86k-parameter detector scores 0.66, level with the U-Net's presence head. One microphone is 0.68. Averaging all 24 does not help."),
-        ("A new recording breaks it", "Hold out one of the three and the score is 0.49. On the sealed site, averaging 24 microphones gives 0.64, and one microphone is 0.53. That quiet audio is one minute."),
+    text(s, 0.55, 1.42, 12.2, 0.3,
+         "AUROC of the one-microphone detector. 0.5 is chance.",
+         size=15, color=BODY)
+    picture(s, DOCS / "analysis_detector.png", 0.45, 1.9, w=6.6)
+    card(s, 7.35, 1.9, 5.4, 3.75)
+    text(s, 7.58, 2.05, 5.0, 0.3, "WHAT ELSE WE TRIED", size=12, color=MUTED, bold=True)
+    tried = [
+        ("+ ESC-50", "0.49 → 0.59", "Only on the training-site flights."),
+        ("+ DEMAND", "−0.03", "Worst held-out fold."),
+        ("U-Net presence head", "0.73 / 0.59", "All 24 / device 3, same afternoon."),
     ]
-    for i, (title, body) in enumerate(points):
-        y = 1.5 + i * 1.75
-        text(s, 5.15, y, 7.6, 0.35, title, size=18, color=INK, bold=True)
-        text(s, 5.15, y + 0.42, 7.6, 1.15, body, size=15, color=BODY, line=1.08)
-    notes(s, """
-The two detectors, the pre-takeoff audio, the mixed-in recordings, and the 18 test soundscapes are named on the method slide. Here is what they scored.
-The 0.49 is the 86k one-microphone network, held out one whole scene at a time. It is chance. The 0.66 beside it is that same network inside one scene, tied with the U-Net's presence head. The 0.64 is that same detector on the sealed site, and only after averaging all 24 microphones. One microphone there is 0.53. The quiet audio is one minute of one scene, so 0.64 is the within-scene result again. We did not find a winner.
-This is the negative result, and it is a data fact. The architecture is not the excuse.
-Why we did not replace 0.49 with a precision-recall curve. Drone frames are about 78% of the matched site, so they are the majority, not the rare class. A detector that says "drone" on almost every frame has precision near 0.8, and a PR curve would read that prior as skill. At the threshold that keeps 95% of drones, the map models fire on 84–96% of empty frames and precision is 0.78–0.80. AUROC asks the question that does not hide this: does a random drone frame outscore a random quiet frame? Across scenes, no.
-The 0.66 from before was two halves of one afternoon.
-On 18 other soundscapes the one-microphone detector fires about 22,000 times an hour at 95% recall. Training on those scenes leaves the held-out rate near 10,000 an hour.
-Past about 90 m, two thirds of labelled drone frames are quieter than typical ambient in the beamformed map. The localizer has the same wall.
-The presence probabilities are not probabilities. The head saturates. A 0.5 threshold means nothing.
-""")
+    for i, (name, value, body) in enumerate(tried):
+        y = 2.5 + i * 1.02
+        text(s, 7.58, y, 3.0, 0.32, name, size=15, color=INK, bold=True)
+        text(s, 10.3, y, 2.25, 0.32, value, size=15, color=INK, bold=True, align=PP_ALIGN.RIGHT)
+        text(s, 7.58, y + 0.36, 5.0, 0.5, body, size=13, color=BODY)
+    bottom_line(s, 5.95, "The detector studies the environment, not the drone. "
+                "A new site needs quiet and drone recordings made there.")
 
 
 def s14_close(prs):
-    s = base(prs, 14, "What we would defend", "Three results, and where they stop")
-    held = [
-        ("Six match twenty-four", "One recorder, no shared clock, is level with the full array. On the matched site that is 69.3% against 70.5% at one frame. On the sealed site, device 3 is again not behind."),
-        ("Depth pays where mics are scarce", "On the matched site, nine frames take device 3 to 73% and leave all 24 at 70%. On the sealed site they stay at 52%."),
-        ("The filter removes lobe hops", "On one frame, 24 microphones go from 70% to 75% and device 3 from 69% to 73%, past 30 m. Once nine frames are stacked it adds nothing."),
+    s = base(prs, 14, "Conclusion", "Time can replace microphones")
+    found = [
+        ("History stands in for microphones",
+         "Nine frames let one recorder of six reach the full 24-microphone array."),
+        ("The filter is an alternative",
+         "It lifts single-frame models, but adds nothing on top of temporal context."),
+        ("Detection is the open problem",
+         "Drone vs no-drone does not generalize. Few negatives likely bias the numbers."),
     ]
-    stops = [
-        ("Past about 90 m", "The labelled drone is often quieter than the background. Their stable-frame 14° is still ahead of us there."),
-        ("Inside 30 m", "Worse than the next bin, on both sites. A source metres from a 2 m array is not a plane wave. Untested."),
-        ("Detection", "Three scenes cannot teach what a drone is not. The fix is another afternoon in another place."),
+    future = [
+        ("More data", "Longer, more varied ambient noise and clean drone recordings."),
+        ("A better array", "Length and geometry matched to the rotor wavelengths."),
+        ("Do the gains hold?", "Check history and the filter as base accuracy rises."),
+        ("A fair benchmark", "Balanced, multi-environment data for an unbiased score."),
     ]
-    text(s, 0.55, 1.42, 6.0, 0.3, "HOLDS", size=13, color=GREEN, bold=True)
-    text(s, 6.85, 1.42, 6.0, 0.3, "STOPS", size=13, color=AMBER, bold=True)
-    for i, (title, body) in enumerate(held):
-        y = 1.8 + i * 1.55
-        text(s, 0.55, y, 6.0, 0.32, title, size=16, color=INK, bold=True)
-        text(s, 0.55, y + 0.34, 6.0, 1.05, body, size=14, color=BODY, line=1.05)
-    for i, (title, body) in enumerate(stops):
-        y = 1.8 + i * 1.55
-        text(s, 6.85, y, 5.9, 0.32, title, size=16, color=INK, bold=True)
-        text(s, 6.85, y + 0.34, 5.9, 1.05, body, size=14, color=BODY, line=1.05)
-    notes(s, """
-We close on the trade a deployment actually faces: 0.9 seconds of latency, or 18 more microphones. They do not add. That trade is the matched site. On the sealed site, nine frames stay at 52%, level with one frame.
-What we would run next: ambient from more places, and a steering model that does not assume a plane wave.
-One drone, one array, two sites. We say the limit ourselves.
-The division of work stays in the report. If we are asked in the room, one sentence is enough.
-The filter takes a step inside 10° at once. A larger jump waits half a second.
-""")
+    text(s, 0.55, 1.42, 6.0, 0.3, "WHAT WE FOUND", size=13, color=GREEN, bold=True)
+    for i, (title, body) in enumerate(found):
+        y = 1.8 + i * 1.6
+        text(s, 0.55, y, 5.9, 0.34, title, size=18, color=INK, bold=True)
+        text(s, 0.55, y + 0.42, 5.9, 0.9, body, size=15, color=BODY, line=1.06)
+    card(s, 6.85, 1.42, 5.9, 5.4, fill=DARK, line=None)
+    text(s, 7.1, 1.62, 5.4, 0.3, "FUTURE WORK", size=13, color="60A5FA", bold=True)
+    for i, (title, body) in enumerate(future):
+        y = 2.08 + i * 1.18
+        text(s, 7.1, y, 5.4, 0.34, title, size=17, color="F5F5F4", bold=True)
+        text(s, 7.1, y + 0.4, 5.4, 0.7, body, size=14, color="D6D3D1", line=1.06)
 
 
 def overflow(prs) -> int:
@@ -707,15 +637,15 @@ def main() -> int:
     s01_title(prs)
     s02_problem(prs)
     s03_data(prs)
-    s04_model(prs)
-    s05_network(prs)
-    s06_hardware(prs)
-    s06_map(prs)
+    s04_hardware(prs)
+    s05_map(prs)
+    s06_model(prs)
+    s07_network(prs)
     s08_training(prs, charts)
-    s09_headline(prs, charts)
-    s10_history(prs, charts)
-    s11_filter(prs)
-    s12_paper(prs)
+    s09_paper(prs)
+    s10_history(prs)
+    s11_filter_gain(prs)
+    s12_filter(prs)
     s13_detection(prs)
     s14_close(prs)
     if len(prs.slides) != TOTAL:
